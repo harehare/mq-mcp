@@ -1,4 +1,6 @@
-# mq-mcp
+<h1 align="center">mq-mcp</h1>
+
+[![ci](https://github.com/harehare/mq-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/harehare/mq-mcp/actions/workflows/ci.yml)
 
 Model Context Protocol (MCP) server implementation for mq. This crate provides an MCP server that allows AI assistants to process Markdown and HTML content using mq's query language.
 
