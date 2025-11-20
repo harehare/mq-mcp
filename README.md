@@ -1,8 +1,10 @@
 <h1 align="center">mq-mcp</h1>
 
 [![ci](https://github.com/harehare/mq-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/harehare/mq-mcp/actions/workflows/ci.yml)
+[![mq language](https://img.shields.io/badge/mq-language-orange.svg)](https://github.com/harehare/mq)
 
-Model Context Protocol (MCP) server implementation for mq. This crate provides an MCP server that allows AI assistants to process Markdown and HTML content using mq's query language.
+
+Model Context Protocol (MCP) server implementation for [mq](https://github.com/harehare/mq). This crate provides an MCP server that allows AI assistants to process Markdown and HTML content using mq's query language.
 
 ## Installation
 
