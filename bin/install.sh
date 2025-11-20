@@ -114,7 +114,7 @@ get_download_url() {
         target="${arch}-unknown-linux-gnu"
     fi
 
-    echo "https://github.com/$MQ_REPO/releases/download/$version/mq-${target}${ext}"
+    echo "https://github.com/$MQ_REPO/releases/download/$version/mq-mcp-${target}${ext}"
 }
 
 # Download checksums file
@@ -184,13 +184,13 @@ install_mq() {
     local os="$2"
     local arch="$3"
     local download_url
-    local binary_name="mq"
+    local binary_name="mq-mcp"
     local ext=""
     local target=""
 
     if [[ "$os" == "windows" ]]; then
         ext=".exe"
-        binary_name="mq.exe"
+        binary_name="mq-mcp.exe"
         target="${arch}-pc-windows-msvc"
     elif [[ "$os" == "darwin" ]]; then
         target="${arch}-apple-darwin"
@@ -298,8 +298,8 @@ update_shell_profile() {
 # Verify installation
 verify_installation() {
     # Check mq installation
-    if [[ -x "$MQ_BIN_DIR/mq" ]] || [[ -x "$MQ_BIN_DIR/mq.exe" ]]; then
-        log "✓ mq installation verified"
+    if [[ -x "$MQ_BIN_DIR/mq-mcp" ]] || [[ -x "$MQ_BIN_DIR/mq-mcp.exe" ]]; then
+        log "✓ mq-mcp installation verified"
         log "Installation verification successful!"
         return 0
     else
@@ -320,7 +320,7 @@ show_post_install() {
     echo -e "     ${CYAN}source ~/.zshrc${NC} ${BLUE}(or your shell's profile)${NC}"
     echo ""
     echo -e "  ${YELLOW}2.${NC} Verify the installation:"
-    echo -e "     ${CYAN}mq --version${NC}"
+    echo -e "     ${CYAN}mq-mcp --version${NC}"
     echo ""
     echo -e "  ${YELLOW}3.${NC} Configure MCP in Claude Desktop:"
     echo -e "     ${CYAN}Add to ~/Library/Application Support/Claude/claude_desktop_config.json:${NC}"
@@ -328,7 +328,7 @@ show_post_install() {
     echo -e "     ${BLUE}{"
     echo -e "       \"mcpServers\": {"
     echo -e "         \"mq-mcp\": {"
-    echo -e "           \"command\": \"$MQ_BIN_DIR/mq\","
+    echo -e "           \"command\": \"$MQ_BIN_DIR/mq-mcp\","
     echo -e "           \"args\": [\"mcp\"]"
     echo -e "         }"
     echo -e "       }"
