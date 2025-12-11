@@ -1,22 +1,32 @@
 [package]
+authors = ["Takahiro Sato <harehare1110@gmail.com>"]
+categories = ["command-line-utilities", "text-processing"]
+description = "Markdown Query - MCP server implementation"
 edition = "2024"
+homepage = "https://mqlang.org/"
+keywords = ["markdown", "jq", "query"]
+license = "MIT"
 name = "mq-mcp"
-version = "0.1.0"
+readme = "README.md"
+repository = "https://github.com/harehare/mq"
+version = "0.1.1"
 
 [dependencies]
 miette = {version = "7.6.0", features = ["fancy"]}
-mq-hir = {git = "https://github.com/harehare/mq.git", package = "mq-hir"}
-mq-lang = {git = "https://github.com/harehare/mq.git", package = "mq-lang"}
-mq-markdown = {git = "https://github.com/harehare/mq.git", package = "mq-markdown"}
+mq-hir = "0.5.5"
+mq-lang = "0.5.5"
+mq-markdown = "0.5.5"
 rmcp = {version = "0.9.0", features = ["server"]}
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
 tokio = {version = "1.48.0", features = ["macros", "rt-multi-thread", "io-std"]}
+tracing = "0.1.43"
+tracing-subscriber = "0.3.22"
 
 [dev-dependencies]
-mq-test = {git = "https://github.com/harehare/mq.git", package = "mq-test"}
 rstest = "0.26.1"
 
 [lib]
 name = "mq_mcp"
 path = "src/lib.rs"
+
