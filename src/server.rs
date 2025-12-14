@@ -185,7 +185,7 @@ impl Server {
             "examples": vec![
                 r#"select(or(.[], .code, .h)) | upcase() | add(" Hello World")"#.to_string(),
                 r#"select(not(.code))"#.to_string(),
-                r#".code("js")"#.to_string(),
+                r#"select(.code.lang == "js")"#.to_string(),
             ],
         });
         let functions_json = serde_json::to_string(&output).expect("Failed to serialize functions");
