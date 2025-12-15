@@ -67,6 +67,36 @@ No parameters. Returns JSON with selector names, descriptions, and parameters.
 
 ### Claude Desktop
 
+#### Using mq-mcp binary directly
+
+Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "mq-mcp": {
+      "command": "/Users/YOUR_USERNAME/.mq/bin/mq-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+Or simply use `mq-mcp` if `~/.mq/bin` is in your PATH:
+
+```json
+{
+  "mcpServers": {
+    "mq-mcp": {
+      "command": "mq-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+#### Using mq command
+
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```json
@@ -94,6 +124,26 @@ Or simply use `mq` if `~/.mq/bin` is in your PATH:
 ```
 
 ### VS Code with MCP Extension
+
+#### Using mq-mcp binary directly
+
+Add to `.vscode/settings.json`:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "mq-mcp": {
+        "type": "stdio",
+        "command": "mq-mcp",
+        "args": []
+      }
+    }
+  }
+}
+```
+
+#### Using mq command
 
 Add to `.vscode/settings.json`:
 
