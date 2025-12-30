@@ -13,9 +13,9 @@ version = "0.1.2"
 
 [dependencies]
 miette = {version = "7.6.0", features = ["fancy"]}
-mq-hir = "0.5.6"
-mq-lang = "0.5.6"
-mq-markdown = "0.5.6"
+mq-hir = "0.5.9"
+mq-lang = "0.5.9"
+mq-markdown = "0.5.9"
 rmcp = {version = "0.9.0", features = ["server"]}
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
