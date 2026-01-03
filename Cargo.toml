@@ -4,12 +4,12 @@ categories = ["command-line-utilities", "text-processing"]
 description = "Markdown Query - MCP server implementation"
 edition = "2024"
 homepage = "https://mqlang.org/"
-keywords = ["markdown", "jq", "query"]
+keywords = ["markdown", "jq", "query", "mcp"]
 license = "MIT"
 name = "mq-mcp"
 readme = "README.md"
 repository = "https://github.com/harehare/mq"
-version = "0.1.3"
+version = "0.1.4"
 
 [dependencies]
 miette = {version = "7.6.0", features = ["fancy"]}
