@@ -9,13 +9,13 @@ license = "MIT"
 name = "mq-mcp"
 readme = "README.md"
 repository = "https://github.com/harehare/mq"
-version = "0.1.4"
+version = "0.1.5"
 
 [dependencies]
 miette = {version = "7.6.0", features = ["fancy"]}
-mq-hir = "0.5.9"
-mq-lang = "0.5.9"
-mq-markdown = "0.5.9"
+mq-hir = "0.5.14"
+mq-lang = "0.5.14"
+mq-markdown = "0.5.14"
 rmcp = {version = "0.9.0", features = ["server"]}
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
