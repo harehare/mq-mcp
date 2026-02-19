@@ -9,12 +9,12 @@ license = "MIT"
 name = "mq-mcp"
 readme = "README.md"
 repository = "https://github.com/harehare/mq"
-version = "0.1.5"
+version = "0.1.6"
 
 [dependencies]
 miette = {version = "7.6.0", features = ["fancy"]}
-mq-hir = "0.5.14"
-mq-lang = "0.5.14"
+mq-hir = "0.5.16"
+mq-lang = "0.5.16"
 mq-markdown = "0.5.14"
 rmcp = {version = "0.9.0", features = ["server"]}
 serde = {version = "1.0", features = ["derive"]}
