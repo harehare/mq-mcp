@@ -139,9 +139,9 @@ checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chrono"
-version = "0.4.43"
+version = "0.4.44"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fac4744fb15ae8337dc853fee7fb3f4e48c0fbaa23d0afe49c447b4fab126118"
+checksum = "c673075a2e0e5f4a1dde27ce9dee1ea4558c7ffe648f576438a20ca1d2acc4b0"
 dependencies = [
  "iana-time-zone",
  "js-sys",
@@ -815,9 +815,9 @@ dependencies = [
 
 [[package]]
 name = "mq-hir"
-version = "0.5.16"
+version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82ec9450618977d71c0ce30e8632ba5b21b494d603911ff6c4a818a4d5a6818c"
+checksum = "35a40668b66204bd0766b47fe4cbfdf7e583983e1abb0406c4c279f4c61dcb4a"
 dependencies = [
  "itertools",
  "mq-lang",
@@ -831,9 +831,9 @@ dependencies = [
 
 [[package]]
 name = "mq-lang"
-version = "0.5.16"
+version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec6ce2588b11c338edf29208d7a834a86d3d6bdc507e8c18ba789090d28ed277"
+checksum = "76a8ae9e706ca3218e88e72cefcce9ad7c4157b1c8d4d2fb12a74447a38fdf32"
 dependencies = [
  "base64",
  "chrono",
@@ -845,18 +845,20 @@ dependencies = [
  "nom_locate",
  "percent-encoding",
  "regex-lite",
+ "ropey",
  "rustc-hash",
  "smallvec",
  "smol_str",
  "string-interner",
  "thiserror",
+ "url",
 ]
 
 [[package]]
 name = "mq-markdown"
-version = "0.5.16"
+version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf97ffae728c9ed7110072060858344fdb09c6e56957bf4cd4fceef05329773e"
+checksum = "ad57fc1b19402f6f75eb9dabcbdab722ffe59ce2fc46a04b7c194c67315fba4d"
 dependencies = [
  "ego-tree",
  "itertools",
@@ -870,7 +872,7 @@ dependencies = [
 
 [[package]]
 name = "mq-mcp"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "miette",
  "mq-hir",
@@ -1215,6 +1217,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ropey"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93411e420bcd1a75ddd1dc3caf18c23155eda2c090631a85af21ba19e97093b5"
+dependencies = [
+ "smallvec",
+ "str_indices",
+]
+
+[[package]]
 name = "rstest"
 version = "0.26.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1481,9 +1493,9 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
 name = "smol_str"
-version = "0.3.5"
+version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f7a918bd2a9951d18ee6e48f076843e8e73a9a5d22cf05bcd4b7a81bdd04e17"
+checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
 dependencies = [
  "borsh",
  "serde_core",
@@ -1494,6 +1506,12 @@ name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
+
+[[package]]
+name = "str_indices"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d08889ec5408683408db66ad89e0e1f93dff55c73a4ccc71c427d5b277ee47e6"
 
 [[package]]
 name = "string-interner"
