@@ -29,4 +29,3 @@ rstest = "0.26.1"
 [lib]
 name = "mq_mcp"
 path = "src/lib.rs"
-
