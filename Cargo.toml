@@ -21,7 +21,7 @@ serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
 tokio = {version = "1.51.0", features = ["macros", "rt-multi-thread", "io-std"]}
 tracing = "0.1.43"
-tracing-subscriber = {version = "0.3.22", features = ["env-filter"]}
+tracing-subscriber = {version = "0.3.23", features = ["env-filter"]}
 
 [dev-dependencies]
 rstest = "0.26.1"
