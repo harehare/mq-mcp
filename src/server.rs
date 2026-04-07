@@ -219,18 +219,15 @@ impl Server {
 #[tool_handler]
 impl ServerHandler for Server {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo {
-            protocol_version: ProtocolVersion::V_2025_06_18,
-            instructions: Some(
-                "mq is a tool for processing markdown content with a jq-like syntax.".into(),
-            ),
-            capabilities: ServerCapabilities::builder()
+        ServerInfo::new(
+            ServerCapabilities::builder()
                 .enable_logging()
                 .enable_tools()
                 .enable_tool_list_changed()
                 .build(),
-            ..Default::default()
-        }
+        )
+        .with_protocol_version(ProtocolVersion::V_2025_06_18)
+        .with_instructions("mq is a tool for processing markdown content with a jq-like syntax.")
     }
 }
 
