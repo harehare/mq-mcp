@@ -23,8 +23,8 @@ cd mq-mcp
 ```
 
 The script will:
-- Install the `mq` binary to `~/.mq/bin`
-- Add `~/.mq/bin` to your PATH (if not already present)
+- Install the `mq` binary to `~/.local/bin`
+- Add `~/.local/bin` to your PATH (if not already present)
 - Support macOS, Linux, and Windows
 - Verify checksums for security
 
@@ -75,14 +75,14 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "mq-mcp": {
-      "command": "/Users/YOUR_USERNAME/.mq/bin/mq-mcp",
+      "command": "~/.local/bin/mq-mcp",
       "args": []
     }
   }
 }
 ```
 
-Or simply use `mq-mcp` if `~/.mq/bin` is in your PATH:
+Or simply use `mq-mcp` if `~/.local/bin` is in your PATH:
 
 ```json
 {
@@ -103,14 +103,14 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 {
   "mcpServers": {
     "mq-mcp": {
-      "command": "/Users/YOUR_USERNAME/.mq/bin/mq",
+      "command": "~/.local/bin/mq",
       "args": ["mcp"]
     }
   }
 }
 ```
 
-Or simply use `mq` if `~/.mq/bin` is in your PATH:
+Or simply use `mq` if `~/.local/bin` is in your PATH:
 
 ```json
 {

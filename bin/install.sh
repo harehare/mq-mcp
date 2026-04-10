@@ -5,8 +5,7 @@ set -e
 # mq-mcp installation script
 
 readonly MQ_REPO="harehare/mq-mcp"
-readonly MQ_INSTALL_DIR="$HOME/.mq"
-readonly MQ_BIN_DIR="$MQ_INSTALL_DIR/bin"
+readonly MQ_BIN_DIR="$HOME/.local/bin"
 
 
 # Colors for output
