@@ -419,12 +419,6 @@ checksum = "3a3076410a55c90011c298b04d0cfa770b00fa04e1e3c97d3f6c9de105a03844"
 
 [[package]]
 name = "foldhash"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
-
-[[package]]
-name = "foldhash"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
@@ -567,20 +561,11 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 
 [[package]]
 name = "hashbrown"
-version = "0.15.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
-dependencies = [
- "foldhash 0.1.5",
-]
-
-[[package]]
-name = "hashbrown"
 version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5419bdc4f6a9207fbeba6d11b604d481addf78ecd10c11ad51e76c2f6482748d"
 dependencies = [
- "foldhash 0.2.0",
+ "foldhash",
 ]
 
 [[package]]
@@ -589,7 +574,7 @@ version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ea0b22561a9c04a7cb1a302c013e0259cd3b4bb619f145b32f72b8b4bcbed230"
 dependencies = [
- "hashbrown 0.16.0",
+ "hashbrown",
 ]
 
 [[package]]
@@ -750,7 +735,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6717a8d2a5a929a1a2eb43a12812498ed141a0bcfb7e8f7844fbdbe4303bba9f"
 dependencies = [
  "equivalent",
- "hashbrown 0.16.0",
+ "hashbrown",
 ]
 
 [[package]]
@@ -915,9 +900,9 @@ dependencies = [
 
 [[package]]
 name = "mq-hir"
-version = "0.5.28"
+version = "0.5.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3ca7a5f4d77267a4bf523615ffcc05854919e7220a9d50ecac5118e2d2cdf86"
+checksum = "850b0db6668da78ac9232148780ac1dfe8be28747a68e9debb10579fe0ef88db"
 dependencies = [
  "itertools",
  "mq-lang",
@@ -931,9 +916,9 @@ dependencies = [
 
 [[package]]
 name = "mq-lang"
-version = "0.5.28"
+version = "0.5.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7af06a353da280055e9eac62d16ebcd7a3314207ca9275688677b7d6331950a4"
+checksum = "9f2bf834fe423be2ddf6b5c3d070849bdfd7c8e699091442285d36f1317cf152"
 dependencies = [
  "base64",
  "chrono",
@@ -942,6 +927,7 @@ dependencies = [
  "itertools",
  "md5",
  "miette",
+ "mq-macros",
  "mq-markdown",
  "nom",
  "nom_locate",
@@ -965,10 +951,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "mq-markdown"
-version = "0.5.28"
+name = "mq-macros"
+version = "0.5.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b2612249610d88646e121aa19de44bc0cafb91a14e3e6b5c7d13921d8d77c49"
+checksum = "5ce58c38d1e438e38a93b719ac9fef9b1265fbca801531eb4d185ba76b1ba590"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "mq-markdown"
+version = "0.5.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "597ed0df54af8059a775089c5c16d7ac22fa5621647c250cbe87a08f27d6539d"
 dependencies = [
  "ego-tree",
  "itertools",
@@ -982,7 +979,7 @@ dependencies = [
 
 [[package]]
 name = "mq-mcp"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "miette",
  "mq-hir",
@@ -1664,11 +1661,11 @@ checksum = "d08889ec5408683408db66ad89e0e1f93dff55c73a4ccc71c427d5b277ee47e6"
 
 [[package]]
 name = "string-interner"
-version = "0.19.0"
+version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "23de088478b31c349c9ba67816fa55d9355232d63c3afea8bf513e31f0f1d2c0"
+checksum = "ad3df9b59e2eded8d825c7c4363ad339a20fb6bc0b9a4778560f518f59910b15"
 dependencies = [
- "hashbrown 0.15.5",
+ "hashbrown",
  "serde",
 ]
 
