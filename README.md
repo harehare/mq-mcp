@@ -36,32 +36,72 @@ source ~/.zshrc  # or ~/.bashrc for bash users
 
 ## Implementation
 
-The server implements four MCP tools:
+The server implements the following MCP tools:
 
-- `html_to_markdown`: Converts HTML to Markdown and executes mq queries
-- `extract_markdown`: Executes mq queries on Markdown content
-- `available_functions`: Returns available functions for mq queries
-- `available_selectors`: Returns available selectors for mq queries
+### Query Tools
+
+- `html_to_markdown`: Converts HTML to Markdown and executes an mq query
+- `extract_markdown`: Executes a custom mq query on Markdown content
+
+### Selector Tools
+
+These tools apply a fixed mq selector to Markdown content:
+
+| Tool | mq selector | Description |
+|------|-------------|-------------|
+| `extract_headings` | `.h` | All headings (h1–h6) |
+| `extract_code_blocks` | `.code` | All fenced code blocks |
+| `extract_todos` | `.todo` | Unchecked task list items |
+| `extract_done_tasks` | `.done` | Checked task list items |
+| `extract_links` | `.link` | All links |
+| `extract_images` | `.image` | All images |
+| `extract_tables` | `.table` | All table cells |
+| `extract_text` | `.text` | Paragraph text nodes |
+| `extract_blockquotes` | `.blockquote` | All blockquotes |
+
+### Section Tools
+
+These tools use the mq [section module](https://mqlang.org/book/start/example.html) to operate on document sections (heading + body):
+
+| Tool | Description |
+|------|-------------|
+| `extract_sections` | Split document into all sections and return as Markdown |
+| `extract_section` | Extract a single section by title (partial, case-sensitive match) |
+| `extract_toc` | Generate an indented table of contents from headings |
+
+### Discovery Tools
+
+- `available_functions`: Returns available mq functions with descriptions and parameters
+- `available_selectors`: Returns available mq selectors with descriptions
 
 ### Tool Parameters
 
 #### html_to_markdown
 
 - `html` (string): HTML content to process
-- `query` (optional string): mq query to execute
+- `query` (optional string): mq query to execute (default: `identity()`)
 
 #### extract_markdown
 
 - `markdown` (string): Markdown content to process
 - `query` (string): mq query to execute
 
-#### available_functions
+#### extract_headings / extract_code_blocks / extract_todos / extract_done_tasks / extract_links / extract_images / extract_tables / extract_text / extract_blockquotes
 
-No parameters. Returns JSON with function names, descriptions, parameters, and example queries.
+- `markdown` (string): Markdown content to process
 
-#### available_selectors
+#### extract_sections / extract_toc
 
-No parameters. Returns JSON with selector names, descriptions, and parameters.
+- `markdown` (string): Markdown content to process
+
+#### extract_section
+
+- `markdown` (string): Markdown content to process
+- `title` (string): Section heading text to match (partial, case-sensitive)
+
+#### available_functions / available_selectors
+
+No parameters.
 
 ## Configuration
 
