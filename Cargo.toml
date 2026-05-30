@@ -9,7 +9,7 @@ license = "MIT"
 name = "mq-mcp"
 readme = "README.md"
 repository = "https://github.com/harehare/mq"
-version = "0.1.15"
+version = "0.1.16"
 
 [dependencies]
 miette = {version = "7.6.0", features = ["fancy"]}
