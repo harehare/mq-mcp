@@ -4,7 +4,11 @@ use rmcp::{
     handler::server::{tool::ToolRouter, wrapper::Parameters},
     model::{CallToolResult, Content, ProtocolVersion, ServerCapabilities, ServerInfo},
     schemars, tool, tool_handler, tool_router,
+    transport::streamable_http_server::{
+        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+    },
 };
+use std::sync::Arc;
 use tokio::io::{stdin, stdout};
 type McpResult = Result<CallToolResult, ErrorData>;
 
@@ -405,6 +409,46 @@ pub async fn start() -> miette::Result<()> {
 
     let service = server.serve(transport).await.map_err(|e| miette!(e))?;
     service.waiting().await.map_err(|e| miette!(e))?;
+
+    Ok(())
+}
+
+/// Configuration for the remote (Streamable HTTP) MCP transport.
+pub struct HttpConfig {
+    /// Address to bind the HTTP listener to, e.g. `127.0.0.1:8080`.
+    pub bind: String,
+    /// Additional `Host` header values to accept, on top of the loopback
+    /// defaults. Required when the server sits behind a reverse proxy or is
+    /// otherwise reachable under a non-loopback hostname, since Streamable
+    /// HTTP rejects unrecognized hosts to guard against DNS rebinding.
+    pub allowed_hosts: Vec<String>,
+}
+
+pub async fn start_http(config: HttpConfig) -> miette::Result<()> {
+    let mut server_config = StreamableHttpServerConfig::default();
+    if !config.allowed_hosts.is_empty() {
+        server_config.allowed_hosts.extend(config.allowed_hosts);
+    }
+
+    let service = StreamableHttpService::new(
+        || Server::new().map_err(|e| std::io::Error::other(e.to_string())),
+        Arc::new(LocalSessionManager::default()),
+        server_config,
+    );
+
+    let router = axum::Router::new().nest_service("/mcp", service);
+    let listener = tokio::net::TcpListener::bind(&config.bind)
+        .await
+        .map_err(|e| miette!(e))?;
+
+    tracing::info!("mq-mcp listening on http://{}/mcp", config.bind);
+
+    axum::serve(listener, router)
+        .with_graceful_shutdown(async {
+            let _ = tokio::signal::ctrl_c().await;
+        })
+        .await
+        .map_err(|e| miette!(e))?;
 
     Ok(())
 }

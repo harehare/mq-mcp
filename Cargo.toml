@@ -12,18 +12,21 @@ repository = "https://github.com/harehare/mq"
 version = "0.1.20"
 
 [dependencies]
+axum = {version = "0.8", default-features = false, features = ["http1", "tokio"]}
+clap = {version = "4.6", features = ["derive"]}
 miette = {version = "7.6.0", features = ["fancy"]}
 mq-hir = "0.6.3"
 mq-lang = "0.6.3"
 mq-markdown = "0.6.3"
-rmcp = {version = "1.7.0", features = ["server"]}
+rmcp = {version = "1.7.0", features = ["server", "transport-streamable-http-server"]}
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
-tokio = {version = "1.52.3", features = ["macros", "rt-multi-thread", "io-std"]}
+tokio = {version = "1.52.3", features = ["macros", "rt-multi-thread", "io-std", "net", "signal"]}
 tracing = "0.1.44"
 tracing-subscriber = {version = "0.3.23", features = ["env-filter"]}
 
 [dev-dependencies]
+reqwest = {version = "0.13", default-features = false, features = ["json"]}
 rstest = "0.26.1"
 
 [lib]
