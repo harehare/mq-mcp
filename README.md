@@ -103,6 +103,33 @@ These tools use the mq [section module](https://mqlang.org/book/start/example.ht
 
 No parameters.
 
+## Transports
+
+By default `mq-mcp` speaks MCP over stdio, for use as a local subprocess. It can
+also run as a remote server using the
+[Streamable HTTP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http)
+transport:
+
+```bash
+mq-mcp --http                          # binds 127.0.0.1:8080, serves at /mcp
+mq-mcp --http --bind 0.0.0.0:8080      # listen on all interfaces
+```
+
+The MCP endpoint is available at `http://<bind>/mcp`.
+
+For security, Streamable HTTP validates the incoming `Host` header and only
+accepts loopback hosts (`localhost`, `127.0.0.1`, `::1`) by default, to guard
+against DNS rebinding. If you place `mq-mcp` behind a reverse proxy or expose
+it under a real hostname, add that hostname with `--allowed-host`:
+
+```bash
+mq-mcp --http --bind 0.0.0.0:8080 --allowed-host mcp.example.com
+```
+
+`mq-mcp --http` has no built-in authentication — put it behind a reverse proxy
+that handles TLS and access control (e.g. an API gateway, VPN, or an
+auth-checking proxy) before exposing it beyond your local machine.
+
 ## Configuration
 
 ### Claude Desktop
@@ -195,6 +222,24 @@ Add to `.vscode/settings.json`:
         "type": "stdio",
         "command": "mq",
         "args": ["mcp"]
+      }
+    }
+  }
+}
+```
+
+### Remote MCP (Streamable HTTP)
+
+Start the server with `mq-mcp --http` (see [Transports](#transports)), then point any
+MCP client that supports remote/HTTP servers at it:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "mq-mcp": {
+        "type": "http",
+        "url": "http://127.0.0.1:8080/mcp"
       }
     }
   }
