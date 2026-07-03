@@ -393,7 +393,6 @@ impl ServerHandler for Server {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(
             ServerCapabilities::builder()
-                .enable_logging()
                 .enable_tools()
                 .enable_tool_list_changed()
                 .build(),
