@@ -1,5 +1,7 @@
 pub mod server;
 
+use std::path::PathBuf;
+
 use clap::Parser;
 use server::HttpConfig;
 use tracing_subscriber::EnvFilter;
@@ -20,6 +22,13 @@ struct Cli {
     /// server is reached under a non-loopback hostname
     #[arg(long = "allowed-host")]
     allowed_hosts: Vec<String>,
+
+    /// Path to an mq-db (.mq-db) store file to expose via the db_* tools
+    /// (db_sql, db_mq, db_list_documents, db_stats, db_index). If it doesn't
+    /// exist yet, db_index will create it on first use. Omit to disable the
+    /// db_* tools entirely.
+    #[arg(long)]
+    db: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -34,12 +43,15 @@ async fn main() -> miette::Result<()> {
     let cli = Cli::parse();
 
     if cli.http {
-        server::start_http(HttpConfig {
-            bind: cli.bind,
-            allowed_hosts: cli.allowed_hosts,
-        })
+        server::start_http(
+            HttpConfig {
+                bind: cli.bind,
+                allowed_hosts: cli.allowed_hosts,
+            },
+            cli.db,
+        )
         .await
     } else {
-        server::start().await
+        server::start(cli.db).await
     }
 }

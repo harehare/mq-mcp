@@ -74,6 +74,25 @@ These tools use the mq [section module](https://mqlang.org/book/start/example.ht
 - `available_functions`: Returns available mq functions with descriptions and parameters
 - `available_selectors`: Returns available mq selectors with descriptions
 
+### Database Tools
+
+These tools query a persistent [`mq-db`](https://github.com/harehare/mq-db)
+knowledge base instead of inline content — only available when `mq-mcp` is
+started with `--db <path>` (see [Database mode](#database-mode) below).
+
+| Tool | Description |
+|------|-------------|
+| `db_sql` | Run a read-only SQL query against the database |
+| `db_mq` | Run an mq program against every document in the database |
+| `db_list_documents` | List indexed documents (id, path, title, tags, block count) |
+| `db_stats` | Block-type / code-language statistics |
+| `db_index` | (Re-)index files/directories into the database and persist it |
+
+Write-back (`UPDATE`/`DELETE` that edits source Markdown) is intentionally
+not exposed here — it's a CLI/library-only feature in `mq-db` gated behind
+an explicit `--write-back` flag, since an MCP tool call can be triggered
+autonomously by an agent without a human confirming each one.
+
 ### Tool Parameters
 
 #### html_to_markdown
@@ -102,6 +121,38 @@ These tools use the mq [section module](https://mqlang.org/book/start/example.ht
 #### available_functions / available_selectors
 
 No parameters.
+
+#### db_sql
+
+- `query` (string): SQL query to run (`SELECT`, `CREATE TABLE`, `INSERT INTO`, `DROP TABLE`, `DESC`, `SHOW TABLES`)
+
+#### db_mq
+
+- `code` (string): mq program to run against every indexed document
+
+#### db_list_documents / db_stats
+
+No parameters.
+
+#### db_index
+
+- `paths` (array of strings): Markdown files or directories to (re)index
+- `recursive` (optional bool): recursively walk directories (default: `false`)
+- `prune` (optional bool): drop catalogued documents whose file no longer exists (default: `false`)
+
+## Database mode
+
+Pass `--db <path>` to load (or create, via `db_index`) a persistent
+[`mq-db`](https://github.com/harehare/mq-db) store and enable the
+[Database Tools](#database-tools) above:
+
+```bash
+mq-mcp --db knowledge.mq-db
+```
+
+Without `--db`, `db_*` tool calls return an error asking you to restart
+with the flag — the rest of the tools (which operate on inline
+markdown/HTML content) work either way.
 
 ## Transports
 
@@ -144,6 +195,19 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
     "mq-mcp": {
       "command": "~/.local/bin/mq-mcp",
       "args": []
+    }
+  }
+}
+```
+
+To enable the [Database Tools](#database-tools), add `--db <path>` to `args`:
+
+```json
+{
+  "mcpServers": {
+    "mq-mcp": {
+      "command": "~/.local/bin/mq-mcp",
+      "args": ["--db", "/absolute/path/to/knowledge.mq-db"]
     }
   }
 }

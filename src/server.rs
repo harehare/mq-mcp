@@ -8,13 +8,69 @@ use rmcp::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     },
 };
-use std::sync::Arc;
+use std::{
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+};
 use tokio::io::{stdin, stdout};
 type McpResult = Result<CallToolResult, ErrorData>;
 
-#[derive(Debug, Clone, Default)]
+/// Shared, mutable handle to the loaded `mq-db` store. Guarded by a plain
+/// (synchronous) `Mutex` — DB tool methods are synchronous, so there's no
+/// `.await` while held, and this avoids pulling in tokio's `sync` feature.
+type SharedDb = Arc<Mutex<mq_db::DocumentStore>>;
+
+/// Loads the store at `db_path` if it exists, otherwise starts with an
+/// empty one (so `db_index` can populate and later save it to that path).
+fn load_or_create_db(db_path: &Path) -> mq_db::DocumentStore {
+    if db_path.exists() {
+        match mq_db::DocumentStore::load(db_path) {
+            Ok(store) => return store,
+            Err(e) => tracing::error!(
+                "failed to load database at {}: {e} — starting with an empty store",
+                db_path.display()
+            ),
+        }
+    }
+    mq_db::DocumentStore::new()
+}
+
+#[derive(Clone, Default)]
 pub struct Server {
     pub tool_router: ToolRouter<Self>,
+    /// Configured `--db` path, if any. `None` means no database was
+    /// configured at startup — DB tools report a clear error rather than
+    /// silently operating on an empty, unsaveable store.
+    db_path: Option<PathBuf>,
+    db: SharedDb,
+}
+
+#[derive(Debug, rmcp::serde::Deserialize, schemars::JsonSchema)]
+struct DbSqlInput {
+    #[schemars(
+        description = "SQL query to run against the loaded mq-db database (SELECT, CREATE TABLE, INSERT INTO, DROP TABLE, DESC, SHOW TABLES). Virtual schema: documents(id, path, title, tags), blocks(id, document_id, block_type, content, pre, post, depth, lang, properties)."
+    )]
+    query: String,
+}
+
+#[derive(Debug, rmcp::serde::Deserialize, schemars::JsonSchema)]
+struct DbMqInput {
+    #[schemars(
+        description = "mq program to run against every document in the loaded mq-db database (only documents indexed from a file path — not ones added as raw strings)"
+    )]
+    code: String,
+}
+
+#[derive(Debug, rmcp::serde::Deserialize, schemars::JsonSchema)]
+struct DbIndexInput {
+    #[schemars(description = "Markdown files or directories to (re)index into the database")]
+    paths: Vec<String>,
+    #[schemars(description = "Recursively walk directories (default: false)")]
+    recursive: Option<bool>,
+    #[schemars(
+        description = "Remove catalogued documents whose path is no longer present in `paths` (default: false)"
+    )]
+    prune: Option<bool>,
 }
 
 #[derive(Debug, rmcp::serde::Deserialize, schemars::JsonSchema)]
@@ -157,10 +213,176 @@ struct SelectorInfo {
 
 #[tool_router]
 impl Server {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(db_path: Option<PathBuf>) -> Result<Self, Box<dyn std::error::Error>> {
+        let db = db_path
+            .as_deref()
+            .map(load_or_create_db)
+            .unwrap_or_default();
         Ok(Self {
             tool_router: Self::tool_router(),
+            db_path,
+            db: Arc::new(Mutex::new(db)),
         })
+    }
+
+    /// Builds a new `Server` sharing an already-loaded database — used by
+    /// the Streamable HTTP transport, which constructs one `Server` per
+    /// session and would otherwise reload the store from disk every time.
+    fn with_shared_db(db_path: Option<PathBuf>, db: SharedDb) -> Self {
+        Self {
+            tool_router: Self::tool_router(),
+            db_path,
+            db,
+        }
+    }
+
+    /// Returns the locked store, or a descriptive error if no `--db` path
+    /// was configured at startup.
+    fn require_db(&self) -> Result<std::sync::MutexGuard<'_, mq_db::DocumentStore>, ErrorData> {
+        if self.db_path.is_none() {
+            return Err(ErrorData::invalid_request(
+                "no database configured — restart mq-mcp with --db <path> to enable db_* tools",
+                None,
+            ));
+        }
+        Ok(self.db.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    #[tool(
+        description = "Run a read-only SQL query against the loaded mq-db database and return matching rows as JSON. Requires mq-mcp to have been started with --db <path>."
+    )]
+    fn db_sql(&self, Parameters(DbSqlInput { query }): Parameters<DbSqlInput>) -> McpResult {
+        let store = self.require_db()?;
+        let engine = mq_db::SqlEngine::new(&store).map_err(|e| {
+            ErrorData::internal_error(
+                "Failed to build SQL engine",
+                Some(serde_json::Value::String(e.to_string())),
+            )
+        })?;
+        let out = engine.execute(&query).map_err(|e| {
+            ErrorData::invalid_request(
+                "SQL query failed",
+                Some(serde_json::Value::String(e.to_string())),
+            )
+        })?;
+        Ok(CallToolResult::success(vec![Content::text(out.to_json())]))
+    }
+
+    #[tool(
+        description = "Run an mq program against every document in the loaded mq-db database and return the results. Requires mq-mcp to have been started with --db <path>."
+    )]
+    fn db_mq(&self, Parameters(DbMqInput { code }): Parameters<DbMqInput>) -> McpResult {
+        let store = self.require_db()?;
+        let results = mq_db::MqEngine::eval_store(&code, &store).map_err(|e| {
+            ErrorData::invalid_request(
+                "mq query failed",
+                Some(serde_json::Value::String(e.to_string())),
+            )
+        })?;
+        Ok(CallToolResult::success(
+            results.into_iter().map(Content::text).collect(),
+        ))
+    }
+
+    #[tool(
+        description = "List every document currently indexed in the loaded mq-db database (id, path, title, tags, block count). Requires mq-mcp to have been started with --db <path>."
+    )]
+    fn db_list_documents(&self) -> McpResult {
+        let store = self.require_db()?;
+        let docs: Vec<serde_json::Value> = store
+            .documents()
+            .iter()
+            .map(|d| {
+                serde_json::json!({
+                    "id": d.id,
+                    "path": d.path.as_ref().and_then(|p| p.to_str()),
+                    "title": d.zone_maps.title,
+                    "tags": d.zone_maps.tags,
+                    "block_count": d.block_count,
+                })
+            })
+            .collect();
+        Ok(CallToolResult::success(vec![Content::text(
+            serde_json::to_string(&docs).unwrap_or_default(),
+        )]))
+    }
+
+    #[tool(
+        description = "Return block-type and code-language statistics for the loaded mq-db database. Requires mq-mcp to have been started with --db <path>."
+    )]
+    fn db_stats(&self) -> McpResult {
+        let store = self.require_db()?;
+        let stats = store.stats();
+        let json = serde_json::json!({
+            "documents": stats.documents,
+            "blocks": stats.blocks,
+            "block_type_counts": stats.block_type_counts.iter()
+                .map(|(bt, count)| serde_json::json!({"block_type": bt.as_str(), "count": count}))
+                .collect::<Vec<_>>(),
+            "code_lang_counts": stats.code_lang_counts.iter()
+                .map(|(lang, count)| serde_json::json!({"lang": lang, "count": count}))
+                .collect::<Vec<_>>(),
+        });
+        Ok(CallToolResult::success(vec![Content::text(
+            json.to_string(),
+        )]))
+    }
+
+    #[tool(
+        description = "Index or re-index Markdown files/directories into the loaded mq-db database, then persist it to the configured --db path. Skips files whose content hasn't changed since the last index; use `prune` to drop catalogued documents whose file no longer exists. Requires mq-mcp to have been started with --db <path>."
+    )]
+    fn db_index(
+        &self,
+        Parameters(DbIndexInput {
+            paths,
+            recursive,
+            prune,
+        }): Parameters<DbIndexInput>,
+    ) -> McpResult {
+        let db_path = self.db_path.clone().ok_or_else(|| {
+            ErrorData::invalid_request(
+                "no database configured — restart mq-mcp with --db <path> to enable db_* tools",
+                None,
+            )
+        })?;
+
+        let files = mq_db::discover::collect_markdown_files(
+            &paths.iter().map(PathBuf::from).collect::<Vec<_>>(),
+            recursive.unwrap_or(false),
+        );
+        if files.is_empty() {
+            return Err(ErrorData::invalid_request(
+                "No Markdown files found in the given paths",
+                None,
+            ));
+        }
+
+        let mut store = self.db.lock().unwrap_or_else(|e| e.into_inner());
+        let report = store
+            .reindex_paths(&files, prune.unwrap_or(false))
+            .map_err(|e| {
+                ErrorData::internal_error(
+                    "Reindex failed",
+                    Some(serde_json::Value::String(e.to_string())),
+                )
+            })?;
+        store.save(&db_path).map_err(|e| {
+            ErrorData::internal_error(
+                "Failed to save database",
+                Some(serde_json::Value::String(e.to_string())),
+            )
+        })?;
+
+        let json = serde_json::json!({
+            "added": report.added.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
+            "updated": report.updated.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
+            "unchanged": report.unchanged,
+            "removed": report.removed.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
+            "failed": report.failed.iter().map(|(p, e)| serde_json::json!({"path": p.to_string_lossy(), "error": e})).collect::<Vec<_>>(),
+        });
+        Ok(CallToolResult::success(vec![Content::text(
+            json.to_string(),
+        )]))
     }
 
     #[tool(
@@ -402,9 +624,9 @@ impl ServerHandler for Server {
     }
 }
 
-pub async fn start() -> miette::Result<()> {
+pub async fn start(db_path: Option<PathBuf>) -> miette::Result<()> {
     let transport = (stdin(), stdout());
-    let server = Server::new().expect("Failed to create server");
+    let server = Server::new(db_path).expect("Failed to create server");
 
     let service = server.serve(transport).await.map_err(|e| miette!(e))?;
     service.waiting().await.map_err(|e| miette!(e))?;
@@ -423,14 +645,23 @@ pub struct HttpConfig {
     pub allowed_hosts: Vec<String>,
 }
 
-pub async fn start_http(config: HttpConfig) -> miette::Result<()> {
+pub async fn start_http(config: HttpConfig, db_path: Option<PathBuf>) -> miette::Result<()> {
     let mut server_config = StreamableHttpServerConfig::default();
     if !config.allowed_hosts.is_empty() {
         server_config.allowed_hosts.extend(config.allowed_hosts);
     }
 
+    // Load the database once and share it across every session — sessions
+    // would otherwise each reload the store from disk (and not observe each
+    // other's `db_index` writes).
+    let shared_db: SharedDb = Arc::new(Mutex::new(
+        db_path
+            .as_deref()
+            .map(load_or_create_db)
+            .unwrap_or_default(),
+    ));
     let service = StreamableHttpService::new(
-        || Server::new().map_err(|e| std::io::Error::other(e.to_string())),
+        move || Ok(Server::with_shared_db(db_path.clone(), shared_db.clone())),
         Arc::new(LocalSessionManager::default()),
         server_config,
     );
@@ -497,7 +728,7 @@ mod tests {
         #[case] query: QueryForHtml,
         #[case] expected: Result<&'static str, &'static str>,
     ) {
-        let server = Server::new().expect("Failed to create server");
+        let server = Server::new(None).expect("Failed to create server");
         let result = server.html_to_markdown(Parameters(query));
         match expected {
             Ok(expected_text) => {
@@ -563,7 +794,7 @@ mod tests {
         #[case] query: QueryForMarkdown,
         #[case] expected: Result<&'static str, &'static str>,
     ) {
-        let server = Server::new().expect("Failed to create server");
+        let server = Server::new(None).expect("Failed to create server");
         let result = server.extract_markdown(Parameters(query));
         match expected {
             Ok(expected_text) => {
@@ -601,7 +832,7 @@ mod tests {
     #[case("# H1\n\n## H2\n\n### H3", vec!["# H1", "## H2", "### H3"])]
     #[case("No headings here.", vec![])]
     fn test_extract_headings(#[case] markdown: &str, #[case] expected: Vec<&str>) {
-        let server = Server::new().unwrap();
+        let server = Server::new(None).unwrap();
         let result = server
             .extract_headings(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -614,7 +845,7 @@ mod tests {
     #[case("```rust\nfn main() {}\n```\n\n```python\nprint(\"hi\")\n```", 2)]
     #[case("No code blocks.", 0)]
     fn test_extract_code_blocks(#[case] markdown: &str, #[case] count: usize) {
-        let server = Server::new().unwrap();
+        let server = Server::new(None).unwrap();
         let result = server
             .extract_code_blocks(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -628,7 +859,7 @@ mod tests {
     #[case("- [x] Done task", vec![])]
     #[case("No list.", vec![])]
     fn test_extract_todos(#[case] markdown: &str, #[case] expected: Vec<&str>) {
-        let server = Server::new().unwrap();
+        let server = Server::new(None).unwrap();
         let result = server
             .extract_todos(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -641,7 +872,7 @@ mod tests {
     #[case("- [ ] Todo\n- [x] Done", vec!["- [x] Done"])]
     #[case("- [ ] Only todo", vec![])]
     fn test_extract_done_tasks(#[case] markdown: &str, #[case] expected: Vec<&str>) {
-        let server = Server::new().unwrap();
+        let server = Server::new(None).unwrap();
         let result = server
             .extract_done_tasks(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -654,7 +885,7 @@ mod tests {
     #[case("[Google](https://google.com) and [Rust](https://rust-lang.org)", 2)]
     #[case("No links here.", 0)]
     fn test_extract_links(#[case] markdown: &str, #[case] count: usize) {
-        let server = Server::new().unwrap();
+        let server = Server::new(None).unwrap();
         let result = server
             .extract_links(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -667,7 +898,7 @@ mod tests {
     #[case("![Alt](img.png) and ![Logo](logo.svg)", 2)]
     #[case("No images.", 0)]
     fn test_extract_images(#[case] markdown: &str, #[case] count: usize) {
-        let server = Server::new().unwrap();
+        let server = Server::new(None).unwrap();
         let result = server
             .extract_images(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -681,7 +912,7 @@ mod tests {
     #[case("| A | B |\n|---|---|\n| 1 | 2 |", 4)]
     #[case("No tables.", 0)]
     fn test_extract_tables(#[case] markdown: &str, #[case] count: usize) {
-        let server = Server::new().unwrap();
+        let server = Server::new(None).unwrap();
         let result = server
             .extract_tables(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -695,7 +926,7 @@ mod tests {
     // from_html_str treats bare "# Only heading" as a single text paragraph (not a heading)
     #[case("# Only heading", 1)]
     fn test_extract_text(#[case] markdown: &str, #[case] count: usize) {
-        let server = Server::new().unwrap();
+        let server = Server::new(None).unwrap();
         let result = server
             .extract_text(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -708,7 +939,7 @@ mod tests {
     #[case("> A quote.\n\n> Another quote.", 2)]
     #[case("No blockquotes.", 0)]
     fn test_extract_blockquotes(#[case] markdown: &str, #[case] count: usize) {
-        let server = Server::new().unwrap();
+        let server = Server::new(None).unwrap();
         let result = server
             .extract_blockquotes(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -732,7 +963,7 @@ Use it like this.\n";
 
     #[test]
     fn test_extract_sections() {
-        let server = Server::new().unwrap();
+        let server = Server::new(None).unwrap();
         let result = server
             .extract_sections(Parameters(MarkdownInput {
                 markdown: SECTION_MD.to_string(),
@@ -750,7 +981,7 @@ Use it like this.\n";
     #[case("Installation", true)]
     #[case("Nonexistent", false)]
     fn test_extract_section(#[case] title: &str, #[case] should_have_content: bool) {
-        let server = Server::new().unwrap();
+        let server = Server::new(None).unwrap();
         let result = server
             .extract_section(Parameters(ExtractSectionInput {
                 markdown: SECTION_MD.to_string(),
@@ -767,7 +998,7 @@ Use it like this.\n";
     #[test]
     fn test_extract_section_title_with_special_chars() {
         let md = "## Section \"quoted\"\n\nContent.";
-        let server = Server::new().unwrap();
+        let server = Server::new(None).unwrap();
         let result = server
             .extract_section(Parameters(ExtractSectionInput {
                 markdown: md.to_string(),
@@ -780,7 +1011,7 @@ Use it like this.\n";
 
     #[test]
     fn test_extract_toc() {
-        let server = Server::new().unwrap();
+        let server = Server::new(None).unwrap();
         let result = server
             .extract_toc(Parameters(MarkdownInput {
                 markdown: SECTION_MD.to_string(),
@@ -796,7 +1027,7 @@ Use it like this.\n";
 
     #[test]
     fn test_available_functions() {
-        let server = Server::new().expect("Failed to create server");
+        let server = Server::new(None).expect("Failed to create server");
         let result = server.available_functions().unwrap();
         assert!(!result.is_error.unwrap_or_default());
         assert_eq!(result.content.into_iter().len(), 1);
@@ -804,7 +1035,7 @@ Use it like this.\n";
 
     #[test]
     fn test_available_selectors() {
-        let server = Server::new().expect("Failed to create server");
+        let server = Server::new(None).expect("Failed to create server");
         let result = server.available_selectors().unwrap();
         assert!(!result.is_error.unwrap_or_default());
         assert_eq!(result.content.into_iter().len(), 1);
@@ -812,7 +1043,7 @@ Use it like this.\n";
 
     #[test]
     fn test_get_info() {
-        let server = Server::new().expect("Failed to create server");
+        let server = Server::new(None).expect("Failed to create server");
         let info = server.get_info();
         assert_eq!(info.protocol_version, ProtocolVersion::V_2025_06_18);
         assert!(info.instructions.is_some());
@@ -821,5 +1052,84 @@ Use it like this.\n";
             instructions.contains("mq is a tool for processing markdown content"),
             "Instructions should mention mq"
         );
+    }
+
+    // ── db_* tools ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn db_tools_report_error_without_configured_db() {
+        let server = Server::new(None).expect("Failed to create server");
+        let err = server
+            .db_sql(Parameters(DbSqlInput {
+                query: "SELECT 1".to_string(),
+            }))
+            .expect_err("expected an error with no --db configured");
+        assert!(err.message.contains("no database configured"));
+    }
+
+    #[test]
+    fn db_index_then_sql_and_mq_and_list_and_stats_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "# Title\n\nHello world\n").unwrap();
+        let db_path = dir.path().join("store.mq-db");
+
+        let server = Server::new(Some(db_path)).expect("Failed to create server");
+
+        let index_result = server
+            .db_index(Parameters(DbIndexInput {
+                paths: vec![dir.path().to_string_lossy().to_string()],
+                recursive: Some(false),
+                prune: Some(false),
+            }))
+            .expect("db_index should succeed");
+        let index_json = ok_texts(index_result).join("");
+        assert!(index_json.contains("\"added\":[") && index_json.contains("a.md"));
+
+        let sql_result = server
+            .db_sql(Parameters(DbSqlInput {
+                query: "SELECT content FROM blocks WHERE block_type = 'heading'".to_string(),
+            }))
+            .expect("db_sql should succeed");
+        assert!(ok_texts(sql_result).join("").contains("Title"));
+
+        let mq_result = server
+            .db_mq(Parameters(DbMqInput {
+                code: ".h1".to_string(),
+            }))
+            .expect("db_mq should succeed");
+        assert!(ok_texts(mq_result).join("").contains("Title"));
+
+        let list_result = server
+            .db_list_documents()
+            .expect("db_list_documents should succeed");
+        let list_json = ok_texts(list_result).join("");
+        assert!(list_json.contains("a.md"));
+
+        let stats_result = server.db_stats().expect("db_stats should succeed");
+        let stats_json = ok_texts(stats_result).join("");
+        assert!(stats_json.contains("\"documents\":1"));
+    }
+
+    #[test]
+    fn db_index_second_run_reports_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.md"), "# Title\n\nHello world\n").unwrap();
+        let db_path = dir.path().join("store.mq-db");
+
+        let server = Server::new(Some(db_path)).expect("Failed to create server");
+        let index_input = || DbIndexInput {
+            paths: vec![dir.path().to_string_lossy().to_string()],
+            recursive: Some(false),
+            prune: Some(false),
+        };
+
+        server
+            .db_index(Parameters(index_input()))
+            .expect("first db_index should succeed");
+        let second = server
+            .db_index(Parameters(index_input()))
+            .expect("second db_index should succeed");
+        let second_json = ok_texts(second).join("");
+        assert!(second_json.contains("\"unchanged\":1"));
     }
 }
