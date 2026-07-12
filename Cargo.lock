@@ -314,7 +314,7 @@ checksum = "d524456ba66e72eb8b115ff89e01e497f8e6d11d78b70b1aa13c0fbd97540a81"
 dependencies = [
  "cfg-if",
  "cpufeatures",
- "rand_core 0.10.1",
+ "rand_core",
 ]
 
 [[package]]
@@ -839,11 +839,9 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
- "js-sys",
  "libc",
  "r-efi 5.3.0",
  "wasip2",
- "wasm-bindgen",
 ]
 
 [[package]]
@@ -853,9 +851,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 6.0.0",
- "rand_core 0.10.1",
+ "rand_core",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1481,6 +1481,8 @@ dependencies = [
 [[package]]
 name = "mq-db"
 version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a499b57cf4c91aa184850e93285effbcb5c1e066012250101431e51509647c19"
 dependencies = [
  "anyhow",
  "axum",
@@ -1500,9 +1502,9 @@ dependencies = [
 
 [[package]]
 name = "mq-hir"
-version = "0.6.4"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a04369376aaf321792c42007d05efe69532137c20ad01af0695ad4a5ae791975"
+checksum = "28fa6b84265a45baf731776a6fcad589f5ec4452eaa1bed6b8d879d8b795d36d"
 dependencies = [
  "itertools 0.15.0",
  "mq-lang",
@@ -1516,16 +1518,16 @@ dependencies = [
 
 [[package]]
 name = "mq-lang"
-version = "0.6.4"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e3607ac3570b7ac0f12ac385f43689689d7af123c47ef822d9a6812a5cac112"
+checksum = "73c5f80180e33e9278a38894b864270f8cacc342a5586cbf7fd9c8e108aa07a8"
 dependencies = [
  "base64",
  "chrono",
  "ciborium",
  "csv",
  "dirs",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "hcl-rs",
  "itertools 0.15.0",
  "md5",
@@ -1536,7 +1538,7 @@ dependencies = [
  "nom_locate",
  "percent-encoding",
  "quick-xml",
- "rand 0.9.4",
+ "rand",
  "regex-lite",
  "ropey",
  "rustc-hash",
@@ -1558,9 +1560,9 @@ dependencies = [
 
 [[package]]
 name = "mq-macros"
-version = "0.6.4"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9efab4192caf4e9bf91f840db36c8a3b420a844e857122dd07a05593ad59e08e"
+checksum = "b5ad779e5b5fa43841cad4ce8eb88b58d32c34e26bdd92a1bc0d1048b1d96874"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1569,9 +1571,9 @@ dependencies = [
 
 [[package]]
 name = "mq-markdown"
-version = "0.6.4"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d2cc321c5808b511b9b06ffb67b504ee6128a064cabfef16a2a0994ea8dce25"
+checksum = "2494d260b43ba34a8243e1fe3f836776c1287638fa0e5e3347dca6a8dab869fd"
 dependencies = [
  "ego-tree",
  "itertools 0.15.0",
@@ -1579,6 +1581,8 @@ dependencies = [
  "miette",
  "rustc-hash",
  "scraper",
+ "serde",
+ "serde_json",
  "serde_yaml",
  "smol_str",
 ]
@@ -1798,15 +1802,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ppv-lite86"
-version = "0.2.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85eae3c4ed2f50dcfe72643da4befc30deadb458a9b590d720cde2f2b1e97da9"
-dependencies = [
- "zerocopy",
-]
-
-[[package]]
 name = "pratt"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1848,9 +1843,9 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
-version = "0.40.1"
+version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2474bd2e5029e7ccb6abb2ba48cf2383a333851dedf495901544281590c7da7f"
+checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
 dependencies = [
  "memchr",
 ]
@@ -1878,42 +1873,13 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rand"
-version = "0.9.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
-dependencies = [
- "rand_chacha",
- "rand_core 0.9.5",
-]
-
-[[package]]
-name = "rand"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2e8e8bcc7961af1fdac401278c6a831614941f6164ee3bf4ce61b7edb162207"
 dependencies = [
  "chacha20",
  "getrandom 0.4.3",
- "rand_core 0.10.1",
-]
-
-[[package]]
-name = "rand_chacha"
-version = "0.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3022b5f1df60f26e1ffddd6c66e8aa15de382ae63b3a0c1bfc0e4d3e3f325cb"
-dependencies = [
- "ppv-lite86",
- "rand_core 0.9.5",
-]
-
-[[package]]
-name = "rand_core"
-version = "0.9.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76afc826de14238e6e8c374ddcc1fa19e374fd8dd986b0d2af0d02377261d83c"
-dependencies = [
- "getrandom 0.3.4",
+ "rand_core",
 ]
 
 [[package]]
@@ -2077,9 +2043,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "1.8.0"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d1f571c72940a19d9532fe52dbea8bc9912bf1d766c2970bb824056b86f3f59"
+checksum = "f00a32c3b81b7b254076a65abd5ab2551209146713ba38f73818657e865e9433"
 dependencies = [
  "async-trait",
  "base64",
@@ -2091,7 +2057,7 @@ dependencies = [
  "http-body-util",
  "pastey",
  "pin-project-lite",
- "rand 0.10.1",
+ "rand",
  "rmcp-macros",
  "schemars",
  "serde",
@@ -2108,9 +2074,9 @@ dependencies = [
 
 [[package]]
 name = "rmcp-macros"
-version = "1.8.0"
+version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1aad0035b69380782d78ea95b508327e6deaa2235909053e596eea8f27b5e1d5"
+checksum = "783d787bf21813b285f13019adc49e11af501c658890c1e519f31f937c68b7e3"
 dependencies = [
  "darling",
  "proc-macro2",

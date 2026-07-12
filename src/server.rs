@@ -2,7 +2,7 @@ use miette::miette;
 use rmcp::{
     ErrorData, ServerHandler, ServiceExt,
     handler::server::{tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, Content, ProtocolVersion, ServerCapabilities, ServerInfo},
+    model::{CallToolResult, ContentBlock, ProtocolVersion, ServerCapabilities, ServerInfo},
     schemars, tool, tool_handler, tool_router,
     transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
@@ -138,7 +138,7 @@ impl Server {
                     if value.is_none() || value.is_empty() {
                         None
                     } else {
-                        Some(Content::text(value.to_string()))
+                        Some(ContentBlock::text(value.to_string()))
                     }
                 })
                 .collect(),
@@ -179,10 +179,10 @@ impl Server {
                     mq_lang::RuntimeValue::Array(arr) => arr
                         .into_iter()
                         .filter(|v| !v.is_none() && !v.is_empty())
-                        .map(|v| Content::text(v.to_string()))
+                        .map(|v| ContentBlock::text(v.to_string()))
                         .collect::<Vec<_>>(),
                     v if v.is_none() || v.is_empty() => vec![],
-                    v => vec![Content::text(v.to_string())],
+                    v => vec![ContentBlock::text(v.to_string())],
                 })
                 .collect(),
         ))
@@ -265,7 +265,7 @@ impl Server {
                 Some(serde_json::Value::String(e.to_string())),
             )
         })?;
-        Ok(CallToolResult::success(vec![Content::text(out.to_json())]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(out.to_json())]))
     }
 
     #[tool(
@@ -280,7 +280,7 @@ impl Server {
             )
         })?;
         Ok(CallToolResult::success(
-            results.into_iter().map(Content::text).collect(),
+            results.into_iter().map(ContentBlock::text).collect(),
         ))
     }
 
@@ -302,7 +302,7 @@ impl Server {
                 })
             })
             .collect();
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             serde_json::to_string(&docs).unwrap_or_default(),
         )]))
     }
@@ -323,7 +323,7 @@ impl Server {
                 .map(|(lang, count)| serde_json::json!({"lang": lang, "count": count}))
                 .collect::<Vec<_>>(),
         });
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json.to_string(),
         )]))
     }
@@ -380,7 +380,7 @@ impl Server {
             "removed": report.removed.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
             "failed": report.failed.iter().map(|(p, e)| serde_json::json!({"path": p.to_string_lossy(), "error": e})).collect::<Vec<_>>(),
         });
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json.to_string(),
         )]))
     }
@@ -420,7 +420,7 @@ impl Server {
                     if value.is_none() || value.is_empty() {
                         None
                     } else {
-                        Some(Content::text(value.to_string()))
+                        Some(ContentBlock::text(value.to_string()))
                     }
                 })
                 .collect::<Vec<_>>(),
@@ -584,7 +584,7 @@ impl Server {
         });
         let functions_json = serde_json::to_string(&output).expect("Failed to serialize functions");
 
-        Ok(CallToolResult::success(vec![Content::text(functions_json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(functions_json)]))
     }
 
     #[tool(description = "Get available selectors that can be used in mq query.")]
@@ -606,7 +606,7 @@ impl Server {
         });
         let selectors_json = serde_json::to_string(&output).expect("Failed to serialize selectors");
 
-        Ok(CallToolResult::success(vec![Content::text(selectors_json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(selectors_json)]))
     }
 }
 
