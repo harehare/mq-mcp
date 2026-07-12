@@ -265,7 +265,7 @@ impl Server {
                 Some(serde_json::Value::String(e.to_string())),
             )
         })?;
-        Ok(CallToolResult::success(vec![Content::text(out.to_json())]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(out.to_json())]))
     }
 
     #[tool(
@@ -280,7 +280,7 @@ impl Server {
             )
         })?;
         Ok(CallToolResult::success(
-            results.into_iter().map(Content::text).collect(),
+            results.into_iter().map(ContentBlock::text).collect(),
         ))
     }
 
@@ -302,7 +302,7 @@ impl Server {
                 })
             })
             .collect();
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             serde_json::to_string(&docs).unwrap_or_default(),
         )]))
     }
@@ -323,7 +323,7 @@ impl Server {
                 .map(|(lang, count)| serde_json::json!({"lang": lang, "count": count}))
                 .collect::<Vec<_>>(),
         });
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json.to_string(),
         )]))
     }
@@ -380,7 +380,7 @@ impl Server {
             "removed": report.removed.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
             "failed": report.failed.iter().map(|(p, e)| serde_json::json!({"path": p.to_string_lossy(), "error": e})).collect::<Vec<_>>(),
         });
-        Ok(CallToolResult::success(vec![Content::text(
+        Ok(CallToolResult::success(vec![ContentBlock::text(
             json.to_string(),
         )]))
     }
