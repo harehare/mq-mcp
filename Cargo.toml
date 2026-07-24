@@ -9,16 +9,16 @@ license = "MIT"
 name = "mq-mcp"
 readme = "README.md"
 repository = "https://github.com/harehare/mq"
-version = "0.1.22"
+version = "0.1.23"
 
 [dependencies]
 axum = {version = "0.8", default-features = false, features = ["http1", "tokio"]}
 clap = {version = "4.6", features = ["derive"]}
 miette = {version = "7.6.0", features = ["fancy"]}
-mq-db = "0.1.6"
-mq-hir = "0.6.5"
-mq-lang = "0.6.5"
-mq-markdown = "0.6.5"
+mq-db = "0.1.8"
+mq-hir = "0.7.0"
+mq-lang = "0.7.0"
+mq-markdown = "0.7.0"
 rmcp = {version = "2.1.0", features = ["server", "transport-streamable-http-server"]}
 serde = {version = "1.0", features = ["derive"]}
 serde_json = {version = "1.0"}
