@@ -161,7 +161,7 @@ impl Server {
             .into_iter()
             .map(mq_lang::RuntimeValue::from)
             .collect();
-        let input = mq_lang::RuntimeValue::Array(all_nodes);
+        let input = mq_lang::RuntimeValue::Array(all_nodes.into());
 
         let values = engine
             .eval(query, std::iter::once(input))
@@ -177,7 +177,7 @@ impl Server {
                 .into_iter()
                 .flat_map(|value| match value {
                     mq_lang::RuntimeValue::Array(arr) => arr
-                        .into_iter()
+                        .iter()
                         .filter(|v| !v.is_none() && !v.is_empty())
                         .map(|v| ContentBlock::text(v.to_string()))
                         .collect::<Vec<_>>(),
