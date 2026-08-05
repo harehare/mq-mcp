@@ -1906,9 +1906,9 @@ dependencies = [
 
 [[package]]
 name = "mq-db"
-version = "0.1.8"
+version = "0.1.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47188ca2d33bfb60e01dc2d040afc8cf6155605e933f426a9c392443c5dd7f90"
+checksum = "749e3f53f6c373595a91f3ef4d1f988de642a1e7a3c2b8b4ec790acbfc8fb16b"
 dependencies = [
  "anyhow",
  "axum",
@@ -1917,8 +1917,8 @@ dependencies = [
  "clap",
  "crossterm 0.28.1",
  "mimalloc",
- "mq-lang 0.7.0",
- "mq-markdown 0.7.0",
+ "mq-lang",
+ "mq-markdown",
  "ratatui",
  "rustc-hash",
  "serde",
@@ -1931,12 +1931,12 @@ dependencies = [
 
 [[package]]
 name = "mq-hir"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36b4eb0db318df0f2fd018f8643327442638770663b167ea12e249d1a3fcdbe2"
+checksum = "c142dbf183d684c4c6285afcc31ba33f7dcdce1b1c41a0dd21e190c320d14271"
 dependencies = [
  "itertools 0.15.0",
- "mq-lang 0.8.0",
+ "mq-lang",
  "rustc-hash",
  "slotmap",
  "smol_str",
@@ -1946,55 +1946,9 @@ dependencies = [
 
 [[package]]
 name = "mq-lang"
-version = "0.7.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da001c23ebcc111f636fedf9f156a49e7d56de4ba5147bfdea31063501817764"
-dependencies = [
- "ammonia",
- "base64 0.22.1",
- "chrono",
- "ciborium",
- "csv",
- "dirs",
- "getrandom 0.4.3",
- "glob",
- "html-escape",
- "itertools 0.15.0",
- "md5",
- "miette",
- "mq-macros 0.7.0",
- "mq-markdown 0.7.0",
- "nom 8.0.0",
- "nom_locate",
- "percent-encoding",
- "quick-xml",
- "rand 0.10.1",
- "regex-lite",
- "rustc-hash",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "similar",
- "smallvec",
- "smol_str",
- "string-interner",
- "strsim",
- "thiserror 2.0.18",
- "toml",
- "toon-format",
- "unicode-width 0.2.2",
- "url",
- "uuid",
- "web-sys",
- "web-time",
- "yaml-rust2",
-]
-
-[[package]]
-name = "mq-lang"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab76d74f1444431fc0509aee2ca919da16b396f2c4e2230d5bd0dd3b18bb75f3"
+checksum = "2d1f67e7c925b2726bef8347ecffc5ae0239e600cc1ea4935266912663803fa3"
 dependencies = [
  "ammonia",
  "base64 0.23.1",
@@ -2009,8 +1963,8 @@ dependencies = [
  "itertools 0.15.0",
  "md5",
  "miette",
- "mq-macros 0.8.0",
- "mq-markdown 0.8.0",
+ "mq-macros",
+ "mq-markdown",
  "nom 8.0.0",
  "nom_locate",
  "percent-encoding",
@@ -2040,20 +1994,9 @@ dependencies = [
 
 [[package]]
 name = "mq-macros"
-version = "0.7.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14c3cce1c3b85e247aff09a2ee394dbdac76425a957ec8c9899bfa4fd55ff624"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.118",
-]
-
-[[package]]
-name = "mq-macros"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7ba9c00abde80c01ce51b3d126d3b88585007a601873d3b15964e7462009ca4"
+checksum = "9fafea948039ff9c82114195fb394a2b380747d8e2121bd59272dd08292fa79f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2062,27 +2005,9 @@ dependencies = [
 
 [[package]]
 name = "mq-markdown"
-version = "0.7.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d296714247c23a16b0890577c6e876fcdc1702964864b38c797aab20da009f57"
-dependencies = [
- "ego-tree",
- "itertools 0.15.0",
- "markdown",
- "miette",
- "rustc-hash",
- "scraper",
- "serde",
- "serde_json",
- "serde_yaml",
- "smol_str",
-]
-
-[[package]]
-name = "mq-markdown"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36f445b6b5250ccc6dd9a95552053ede6862dfe62b8e3451f0c81570d8279ec1"
+checksum = "98556f6da5fee84c268b156bfceda2e48f1063bff2956c1daab7074d0f7500c6"
 dependencies = [
  "ego-tree",
  "itertools 0.15.0",
@@ -2099,15 +2024,15 @@ dependencies = [
 
 [[package]]
 name = "mq-mcp"
-version = "0.1.24"
+version = "0.1.25"
 dependencies = [
  "axum",
  "clap",
  "miette",
  "mq-db",
  "mq-hir",
- "mq-lang 0.8.0",
- "mq-markdown 0.8.0",
+ "mq-lang",
+ "mq-markdown",
  "reqwest",
  "rmcp",
  "rstest",
@@ -2778,12 +2703,6 @@ dependencies = [
  "memchr",
  "regex-syntax",
 ]
-
-[[package]]
-name = "regex-lite"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
 
 [[package]]
 name = "regex-syntax"
