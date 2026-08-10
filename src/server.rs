@@ -112,7 +112,7 @@ impl Server {
         let mut engine = mq_lang::DefaultEngine::default();
         engine.load_builtin_module();
 
-        let parsed = mq_markdown::Markdown::from_html_str(markdown).map_err(|e| {
+        let parsed = mq_markdown::Markdown::from_markdown_str(markdown).map_err(|e| {
             ErrorData::parse_error(
                 "Failed to parse markdown",
                 Some(serde_json::Value::String(e.to_string())),
@@ -149,7 +149,7 @@ impl Server {
         let mut engine = mq_lang::DefaultEngine::default();
         engine.load_builtin_module();
 
-        let parsed = mq_markdown::Markdown::from_html_str(markdown).map_err(|e| {
+        let parsed = mq_markdown::Markdown::from_markdown_str(markdown).map_err(|e| {
             ErrorData::parse_error(
                 "Failed to parse markdown",
                 Some(serde_json::Value::String(e.to_string())),
