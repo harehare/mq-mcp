@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use mq_mcp::server::{HttpConfig, start_http};
 
-async fn spawn_server_with_db(db_path: Option<PathBuf>) -> (String, tokio::task::JoinHandle<()>) {
+async fn spawn_server_with_config(
+    db_path: Option<PathBuf>,
+    bearer_token: Option<String>,
+) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind ephemeral port");
@@ -17,6 +20,7 @@ async fn spawn_server_with_db(db_path: Option<PathBuf>) -> (String, tokio::task:
                 HttpConfig {
                     bind,
                     allowed_hosts: vec![],
+                    bearer_token,
                 },
                 db_path,
             )
@@ -39,6 +43,10 @@ async fn spawn_server_with_db(db_path: Option<PathBuf>) -> (String, tokio::task:
     }
 
     (format!("http://{addr}/mcp"), handle)
+}
+
+async fn spawn_server_with_db(db_path: Option<PathBuf>) -> (String, tokio::task::JoinHandle<()>) {
+    spawn_server_with_config(db_path, None).await
 }
 
 async fn spawn_server() -> (String, tokio::task::JoinHandle<()>) {
@@ -102,6 +110,62 @@ async fn test_streamable_http_initialize_and_call_tool() {
         .expect("tool call body");
 
     assert!(body.contains("# Hello"), "unexpected tool response: {body}");
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn test_bearer_token_rejects_missing_or_wrong_token() {
+    let (url, handle) = spawn_server_with_config(None, Some("secret".to_string())).await;
+    let client = reqwest::Client::new();
+
+    let no_token_status = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .body(
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#,
+        )
+        .send()
+        .await
+        .expect("request without token")
+        .status();
+    assert_eq!(no_token_status, 401);
+
+    let wrong_token_status = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", "Bearer wrong")
+        .body(
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#,
+        )
+        .send()
+        .await
+        .expect("request with wrong token")
+        .status();
+    assert_eq!(wrong_token_status, 401);
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn test_bearer_token_accepts_correct_token() {
+    let (url, handle) = spawn_server_with_config(None, Some("secret".to_string())).await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("Authorization", "Bearer secret")
+        .body(
+            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#,
+        )
+        .send()
+        .await
+        .expect("request with correct token");
+    assert_eq!(response.status(), 200);
 
     handle.abort();
 }

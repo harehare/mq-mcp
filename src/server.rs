@@ -100,6 +100,36 @@ struct MarkdownInput {
 }
 
 #[derive(Debug, rmcp::serde::Deserialize, schemars::JsonSchema)]
+struct BatchDocument {
+    #[schemars(description = "Optional identifier for this document (e.g. a file path), echoed back in its result")]
+    id: Option<String>,
+    #[schemars(description = "The markdown content to process")]
+    markdown: String,
+}
+
+#[derive(Debug, rmcp::serde::Deserialize, schemars::JsonSchema)]
+struct QueryForMarkdownBatch {
+    #[schemars(description = "Documents to run the same query against")]
+    documents: Vec<BatchDocument>,
+    #[schemars(
+        description = "The mq query to execute against every document. Selectors and functions listed in the available_selectors and available_functions tools can be used."
+    )]
+    query: String,
+}
+
+#[derive(Debug, rmcp::serde::Serialize, schemars::JsonSchema)]
+struct BatchDocumentResult {
+    /// Position of this document in the `documents` array that was passed in.
+    index: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    results: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Debug, rmcp::serde::Deserialize, schemars::JsonSchema)]
 struct ExtractSectionInput {
     #[schemars(description = "The markdown content to process")]
     markdown: String,
@@ -143,6 +173,35 @@ impl Server {
                 })
                 .collect(),
         ))
+    }
+
+    /// Same evaluation as `eval_query`, but returning plain strings and a
+    /// plain error message instead of an `McpResult` — used by the batch
+    /// tool, where one document's failure shouldn't abort the others.
+    fn run_query_strings(&self, markdown: &str, query: &str) -> Result<Vec<String>, String> {
+        let mut engine = mq_lang::DefaultEngine::default();
+        engine.load_builtin_module();
+
+        let parsed = mq_markdown::Markdown::from_markdown_str(markdown)
+            .map_err(|e| format!("Failed to parse markdown: {e}"))?;
+
+        let values = engine
+            .eval(
+                query,
+                parsed.nodes.into_iter().map(mq_lang::RuntimeValue::from),
+            )
+            .map_err(|e| format!("Failed to query: {e}"))?;
+
+        Ok(values
+            .into_iter()
+            .filter_map(|value| {
+                if value.is_none() || value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                }
+            })
+            .collect())
     }
 
     fn eval_aggregate(&self, markdown: &str, query: &str) -> McpResult {
@@ -437,6 +496,42 @@ impl Server {
         self.eval_query(&markdown, &query)
     }
 
+    #[tool(
+        description = "Run the same mq query against multiple markdown documents in one call, instead of one extract_markdown call per document. Returns a JSON array with one object per document (index, optional id, results, and error if that document's query failed) — a failure in one document does not abort the rest."
+    )]
+    fn extract_markdown_batch(
+        &self,
+        Parameters(QueryForMarkdownBatch { documents, query }): Parameters<QueryForMarkdownBatch>,
+    ) -> McpResult {
+        let results: Vec<BatchDocumentResult> = documents
+            .into_iter()
+            .enumerate()
+            .map(|(index, doc)| match self.run_query_strings(&doc.markdown, &query) {
+                Ok(results) => BatchDocumentResult {
+                    index,
+                    id: doc.id,
+                    results,
+                    error: None,
+                },
+                Err(error) => BatchDocumentResult {
+                    index,
+                    id: doc.id,
+                    results: Vec::new(),
+                    error: Some(error),
+                },
+            })
+            .collect();
+
+        let json = serde_json::to_string_pretty(&results).map_err(|e| {
+            ErrorData::internal_error(
+                "Failed to serialize batch results",
+                Some(serde_json::Value::String(e.to_string())),
+            )
+        })?;
+
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
+    }
+
     #[tool(description = "Extract all headings (h1–h6) from markdown content.")]
     fn extract_headings(
         &self,
@@ -643,6 +738,37 @@ pub struct HttpConfig {
     /// otherwise reachable under a non-loopback hostname, since Streamable
     /// HTTP rejects unrecognized hosts to guard against DNS rebinding.
     pub allowed_hosts: Vec<String>,
+    /// If set, every request to `/mcp` must carry `Authorization: Bearer
+    /// <token>` matching this value, or it's rejected with 401.
+    pub bearer_token: Option<String>,
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+async fn require_bearer_token(
+    axum::extract::State(expected): axum::extract::State<Arc<str>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let authorized = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .is_some_and(|token| constant_time_eq(token.as_bytes(), expected.as_bytes()));
+
+    if authorized {
+        next.run(req).await
+    } else {
+        (axum::http::StatusCode::UNAUTHORIZED, "Unauthorized").into_response()
+    }
 }
 
 pub async fn start_http(config: HttpConfig, db_path: Option<PathBuf>) -> miette::Result<()> {
@@ -666,7 +792,13 @@ pub async fn start_http(config: HttpConfig, db_path: Option<PathBuf>) -> miette:
         server_config,
     );
 
-    let router = axum::Router::new().nest_service("/mcp", service);
+    let router = if let Some(token) = &config.bearer_token {
+        axum::Router::new().nest_service("/mcp", service).layer(
+            axum::middleware::from_fn_with_state(Arc::<str>::from(token.as_str()), require_bearer_token),
+        )
+    } else {
+        axum::Router::new().nest_service("/mcp", service)
+    };
     let listener = tokio::net::TcpListener::bind(&config.bind)
         .await
         .map_err(|e| miette!(e))?;
@@ -817,6 +949,78 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_extract_markdown_batch_mixes_success_and_per_document_error() {
+        let server = Server::new(None).expect("Failed to create server");
+        let result = server
+            .extract_markdown_batch(Parameters(QueryForMarkdownBatch {
+                documents: vec![
+                    BatchDocument {
+                        id: Some("a.md".to_string()),
+                        markdown: "# Title A".to_string(),
+                    },
+                    BatchDocument {
+                        id: Some("b.md".to_string()),
+                        markdown: "# Title B".to_string(),
+                    },
+                ],
+                query: ".h1".to_string(),
+            }))
+            .expect("batch call should succeed even if a document's query fails");
+
+        assert!(!result.is_error.unwrap_or_default());
+        let text = result.content[0].as_text().unwrap().text.clone();
+        let parsed: Vec<BatchDocumentResultForTest> = serde_json::from_str(&text).unwrap();
+
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].index, 0);
+        assert_eq!(parsed[0].id.as_deref(), Some("a.md"));
+        assert_eq!(parsed[0].results, vec!["# Title A".to_string()]);
+        assert!(parsed[0].error.is_none());
+        assert_eq!(parsed[1].id.as_deref(), Some("b.md"));
+        assert_eq!(parsed[1].results, vec!["# Title B".to_string()]);
+    }
+
+    #[test]
+    fn test_extract_markdown_batch_reports_error_without_aborting_other_documents() {
+        let server = Server::new(None).expect("Failed to create server");
+        let result = server
+            .extract_markdown_batch(Parameters(QueryForMarkdownBatch {
+                documents: vec![
+                    BatchDocument {
+                        id: None,
+                        markdown: "not valid because ".to_string(),
+                    },
+                    BatchDocument {
+                        id: None,
+                        markdown: "# Fine".to_string(),
+                    },
+                ],
+                query: "not_a_function(".to_string(),
+            }))
+            .expect("batch call itself should still succeed");
+
+        let text = result.content[0].as_text().unwrap().text.clone();
+        let parsed: Vec<BatchDocumentResultForTest> = serde_json::from_str(&text).unwrap();
+
+        assert_eq!(parsed.len(), 2);
+        assert!(parsed[0].results.is_empty());
+        assert!(parsed[0].error.as_deref().unwrap().contains("Failed to query"));
+        assert!(parsed[1].results.is_empty());
+        assert!(parsed[1].error.as_deref().unwrap().contains("Failed to query"));
+    }
+
+    #[derive(Debug, rmcp::serde::Deserialize)]
+    struct BatchDocumentResultForTest {
+        index: usize,
+        #[serde(default)]
+        id: Option<String>,
+        #[serde(default)]
+        results: Vec<String>,
+        #[serde(default)]
+        error: Option<String>,
     }
 
     fn ok_texts(result: CallToolResult) -> Vec<String> {

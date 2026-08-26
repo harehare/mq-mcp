@@ -1,9 +1,14 @@
-<h1 align="center">mq-mcp</h1>
+<div align="center">
+  <img src="assets/logo.svg" style="width: 128px; height: 128px;"/>
+
+<h1>mq-mcp</h1>
 
 [![ci](https://github.com/harehare/mq-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/harehare/mq-mcp/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/mq-mcp.svg)](https://crates.io/crates/mq-mcp)
 [![license](https://img.shields.io/github/license/harehare/mq-mcp.svg)](./LICENSE)
 [![release](https://img.shields.io/github/v/release/harehare/mq-mcp.svg)](https://github.com/harehare/mq-mcp/releases)
+
+</div>
 
 
 Model Context Protocol (MCP) server implementation for [mq](https://github.com/harehare/mq). This crate provides an MCP server that allows AI assistants to process Markdown and HTML content using mq's query language.
@@ -44,6 +49,7 @@ The server implements the following MCP tools:
 
 - `html_to_markdown`: Converts HTML to Markdown and executes an mq query
 - `extract_markdown`: Executes a custom mq query on Markdown content
+- `extract_markdown_batch`: Executes the same mq query against multiple Markdown documents in one call, returning a JSON array with each document's index, optional id, and results (or a per-document error, without aborting the rest)
 
 ### Selector Tools
 
@@ -106,6 +112,13 @@ autonomously by an agent without a human confirming each one.
 
 - `markdown` (string): Markdown content to process
 - `query` (string): mq query to execute
+
+#### extract_markdown_batch
+
+- `documents` (array): Documents to run the same query against, each `{ id?: string, markdown: string }` — `id` is echoed back in the result to identify which document a row came from (e.g. a file path)
+- `query` (string): mq query to execute against every document
+
+Returns one JSON text block: an array of `{ index, id?, results?, error? }`, in the same order as `documents`. A query failure on one document is reported in that entry's `error` field rather than failing the whole call.
 
 #### extract_headings / extract_code_blocks / extract_todos / extract_done_tasks / extract_links / extract_images / extract_tables / extract_text / extract_blockquotes
 
@@ -179,9 +192,21 @@ it under a real hostname, add that hostname with `--allowed-host`:
 mq-mcp --http --bind 0.0.0.0:8080 --allowed-host mcp.example.com
 ```
 
-`mq-mcp --http` has no built-in authentication — put it behind a reverse proxy
-that handles TLS and access control (e.g. an API gateway, VPN, or an
-auth-checking proxy) before exposing it beyond your local machine.
+By default, `mq-mcp --http` has no authentication — for anything beyond local
+loopback use, either put it behind a reverse proxy that handles TLS and
+access control, or use the built-in bearer token check with `--bearer-token`
+(or, to keep the token out of the process list, the `MQ_MCP_BEARER_TOKEN`
+env var):
+
+```bash
+mq-mcp --http --bind 0.0.0.0:8080 --bearer-token "$(openssl rand -hex 32)"
+# or
+MQ_MCP_BEARER_TOKEN=... mq-mcp --http --bind 0.0.0.0:8080
+```
+
+Every request to `/mcp` must then include `Authorization: Bearer <token>`, or
+it's rejected with `401`. This is a single static token, not per-client
+auth — for that, an auth-checking reverse proxy is still the better fit.
 
 ## Configuration
 

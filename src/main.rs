@@ -23,6 +23,10 @@ struct Cli {
     #[arg(long = "allowed-host")]
     allowed_hosts: Vec<String>,
 
+    /// Require `Authorization: Bearer <token>` on every /mcp request (HTTP transport only).
+    #[arg(long = "bearer-token", env = "MQ_MCP_BEARER_TOKEN")]
+    bearer_token: Option<String>,
+
     /// Path to an mq-db (.mq-db) store file to expose via the db_* tools
     /// (db_sql, db_mq, db_list_documents, db_stats, db_index). If it doesn't
     /// exist yet, db_index will create it on first use. Omit to disable the
@@ -47,6 +51,7 @@ async fn main() -> miette::Result<()> {
             HttpConfig {
                 bind: cli.bind,
                 allowed_hosts: cli.allowed_hosts,
+                bearer_token: cli.bearer_token,
             },
             cli.db,
         )
