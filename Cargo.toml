@@ -15,7 +15,7 @@ version = "0.1.28"
 axum = {version = "0.8", default-features = false, features = ["http1", "tokio"]}
 clap = {version = "4.6", features = ["derive"]}
 miette = {version = "7.6.0", features = ["fancy"]}
-mq-db = "0.1.12"
+mq-db = "0.2.0"
 mq-hir = "0.8.4"
 mq-lang = "0.8.4"
 mq-markdown = "0.8.4"
