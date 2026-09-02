@@ -1942,9 +1942,9 @@ dependencies = [
 
 [[package]]
 name = "mq-db"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e38bc62254b8764d3ef0e248bf737e5543951a8173f0238cebadeed377447e74"
+checksum = "97c4f94c2485c23579f04a486fb5be1bf19f2c217a7ed8226009121c19643f3b"
 dependencies = [
  "anyhow",
  "axum",
