@@ -1942,9 +1942,9 @@ dependencies = [
 
 [[package]]
 name = "mq-db"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97c4f94c2485c23579f04a486fb5be1bf19f2c217a7ed8226009121c19643f3b"
+checksum = "a89f8a8e551f5bb4c8f59f0e6d40e5ae8871e65b09b69065bc651f399d79bb38"
 dependencies = [
  "anyhow",
  "axum",
@@ -1956,6 +1956,7 @@ dependencies = [
  "mq-lang",
  "mq-markdown",
  "ratatui",
+ "regex",
  "rustc-hash",
  "serde",
  "serde_json",
