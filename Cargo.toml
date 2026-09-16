@@ -28,7 +28,7 @@ tracing-subscriber = {version = "0.3.23", features = ["env-filter"]}
 
 [dev-dependencies]
 reqwest = {version = "0.13", default-features = false, features = ["json"]}
-rstest = "0.26.1"
+rstest = "0.27.0"
 tempfile = "3"
 
 [lib]
