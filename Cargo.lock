@@ -1961,9 +1961,9 @@ dependencies = [
 
 [[package]]
 name = "mq-db"
-version = "0.2.4"
+version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "495f1860241d83415e433a6f58668ec2df233fcf9247361a9c663f337fb10cec"
+checksum = "ce6482a184dc6d8b4065f06f15566ad46aa30132664138aa3e0444f32c667171"
 dependencies = [
  "anyhow",
  "axum",
@@ -1984,6 +1984,7 @@ dependencies = [
  "sqlparser",
  "thiserror 2.0.18",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2087,7 +2088,7 @@ dependencies = [
 
 [[package]]
 name = "mq-mcp"
-version = "0.1.30"
+version = "0.1.31"
 dependencies = [
  "axum",
  "clap",
