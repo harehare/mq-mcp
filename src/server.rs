@@ -2,7 +2,7 @@ use miette::miette;
 use rmcp::{
     ErrorData, ServerHandler, ServiceExt,
     handler::server::{tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, ContentBlock, ProtocolVersion, ServerCapabilities, ServerInfo},
+    model::{CallToolResult, ContentBlock, ProtocolVersion, ServerCapabilities, ServerConfig},
     schemars, tool, tool_handler, tool_router,
     transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
@@ -707,8 +707,8 @@ impl Server {
 
 #[tool_handler]
 impl ServerHandler for Server {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_tool_list_changed()
