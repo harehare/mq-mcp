@@ -650,9 +650,9 @@ impl Server {
         let mut functions = Vec::with_capacity(256);
 
         // Get built-in functions
-        for (name, builtin_doc) in hir.builtin.functions.iter() {
+        for builtin_doc in hir.builtin.docs.functions() {
             functions.push(FunctionInfo {
-                name: name.to_string(),
+                name: builtin_doc.name.to_string(),
                 description: builtin_doc.description.to_string(),
                 params: builtin_doc.params.iter().map(|p| p.to_string()).collect(),
                 is_builtin: true,
@@ -660,9 +660,9 @@ impl Server {
         }
 
         // Get internal functions
-        for (name, builtin_doc) in hir.builtin.internal_functions.iter() {
+        for builtin_doc in hir.builtin.docs.internal_functions() {
             functions.push(FunctionInfo {
-                name: name.to_string(),
+                name: builtin_doc.name.to_string(),
                 description: builtin_doc.description.to_string(),
                 params: builtin_doc.params.iter().map(|p| p.to_string()).collect(),
                 is_builtin: true,
@@ -688,9 +688,9 @@ impl Server {
         let mut selectors = Vec::with_capacity(256);
 
         // Get selectors
-        for (name, selector_doc) in hir.builtin.selectors.iter() {
+        for selector_doc in hir.builtin.docs.selectors() {
             selectors.push(SelectorInfo {
-                name: name.to_string(),
+                name: selector_doc.name.to_string(),
                 description: selector_doc.description.to_string(),
                 params: selector_doc.params.iter().map(|p| p.to_string()).collect(),
             });
