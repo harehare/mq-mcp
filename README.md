@@ -49,7 +49,7 @@ The server implements the following MCP tools:
 
 - `html_to_markdown`: Converts HTML to Markdown and executes an mq query
 - `extract_markdown`: Executes a custom mq query on Markdown content
-- `extract_markdown_batch`: Executes the same mq query against multiple Markdown documents in one call, returning a JSON array with each document's index, optional id, and results (or a per-document error, without aborting the rest)
+- `extract_markdown_batch`: Executes the same mq query against multiple Markdown documents (inline or by file `path`) in one call, returning each document's index, optional id, results and total (or a per-document error, without aborting the rest)
 
 ### Selector Tools
 
@@ -77,12 +77,34 @@ These tools use the mq [section module](https://mqlang.org/book/start/example.ht
 | `extract_section` | Extract a single section by title (partial, case-sensitive match) |
 | `extract_toc` | Generate an indented table of contents from headings |
 
+### Document Tools
+
+These tools help a model work out what to read before reading it:
+
+| Tool | Description |
+|------|-------------|
+| `document_outline` | Document structure without its content: totals (characters, lines, code blocks by language, tables, links, images, todos), front matter format, and every heading with its line range, size in characters and number of subsections |
+| `extract_frontmatter` | YAML or TOML front matter as parsed JSON, plus its raw text (`found: false` if there is none) |
+| `validate_query` | Checks an mq query without running it: syntax errors and unknown functions, selectors or modules, with line/column and a "did you mean" suggestion. Pass a sample (`markdown` or `path`) to also dry-run it and get the match count and first results |
+| `list_files` | Lists the files the server may read through `path` (see [Reading files](#reading-files)) |
+
+`document_outline`, `extract_frontmatter`, `validate_query`, `list_files` and
+`extract_markdown_batch` declare an `outputSchema` and return `structuredContent`.
+
 ### Discovery Tools
 
 - `available_functions`: Returns available mq functions with descriptions and parameters
 - `available_selectors`: Returns available mq selectors with descriptions
 
 ### Tool Parameters
+
+Every tool that takes a Markdown document accepts it either inline as
+`markdown` or as a file `path` (see [Reading files](#reading-files)) — give
+exactly one. `html_to_markdown` does the same with `html`. The examples below
+list `markdown`; `path` is always an alternative to it.
+
+Tools that return a list of results also accept the options described in
+[Output controls](#output-controls).
 
 #### html_to_markdown
 
@@ -98,10 +120,13 @@ These tools use the mq [section module](https://mqlang.org/book/start/example.ht
 
 #### extract_markdown_batch
 
-- `documents` (array): Documents to run the same query against, each `{ id?: string, markdown: string }` — `id` is echoed back in the result to identify which document a row came from (e.g. a file path)
+- `documents` (array): Documents to run the same query against, each `{ id?: string, markdown?: string, path?: string }` — `id` is echoed back in the result to identify which document a row came from (it defaults to `path`)
 - `query` (string): mq query to execute against every document
+- `timeout_ms` (optional integer): timeout for this call, capped by `--max-timeout`
+- `limit` (optional integer): at most this many results per document
+- `max_output_chars` (optional integer): cap on the characters returned across all documents
 
-Returns one JSON text block: an array of `{ index, id?, results?, error? }`, in the same order as `documents`. A query failure on one document is reported in that entry's `error` field rather than failing the whole call.
+Returns `{ "documents": [{ index, id?, results, total, next_offset?, error? }] }`, in the same order as `documents`. A query or file error on one document is reported in that entry's `error` field rather than failing the whole call. `next_offset` is set when results were left out because of `limit` or `max_output_chars`.
 
 #### extract_headings / extract_code_blocks / extract_todos / extract_done_tasks / extract_links / extract_images / extract_tables / extract_text / extract_blockquotes
 
@@ -124,6 +149,103 @@ Returns one JSON text block: an array of `{ index, id?, results?, error? }`, in 
 
 No parameters.
 
+#### document_outline
+
+- `markdown` / `path`: the document
+- `max_depth` (optional integer): list only headings up to this depth (counts in `stats` still cover the whole document)
+
+#### extract_frontmatter
+
+- `markdown` / `path`: the document
+
+#### validate_query
+
+- `query` (string): mq query to check
+- `markdown` / `path` (optional): sample document for a dry run
+- `timeout_ms` (optional integer): timeout for the dry run
+
+#### list_files
+
+- `directory` (optional string): directory to list, inside an allowed directory (default: all of them)
+- `extensions` (optional array of strings): extensions to include, without the dot (default: `md`, `markdown`, `mdx`)
+- `limit` (optional integer): at most this many files (default 200, maximum 1000)
+
+## Reading files
+
+Passing a large document inline means the model has to write it out in full,
+and the same text is paid for twice (once read, once sent). With file access
+enabled, tools take a `path` instead and the document never passes through the
+conversation.
+
+File access is **off by default**. Allow one or more directories with `--root`:
+
+```bash
+mq-mcp --root ~/notes --root ~/projects/docs
+MQ_MCP_ROOTS=~/notes:~/projects/docs mq-mcp     # ':' separated (';' on Windows)
+```
+
+| Option | Env var | Default | Description |
+|--------|---------|---------|-------------|
+| `--root <dir>` | `MQ_MCP_ROOTS` | none (disabled) | Directory the `path` parameter may read from (repeatable) |
+| `--max-file-size <bytes>` | `MQ_MCP_MAX_FILE_SIZE` | `10485760` | Largest file that can be read |
+
+- A `path` is accepted only if it resolves to a file inside a root. Relative
+  paths are tried against each root in turn; absolute paths work too.
+  `..` and symlinks are resolved *before* the check, so neither can escape a root.
+- A missing file and a file outside the roots give the same error, so paths
+  outside the roots can't be probed for existence.
+- Files are read-only, must be UTF-8 text, and must be under `--max-file-size`.
+  Any text file under a root can be read, not only `.md` — don't point `--root`
+  at a directory holding secrets.
+- mq queries cannot read files themselves: functions such as `read_file` and
+  `env` are denied inside queries, whatever the roots are.
+- `list_files` shows what is available; it skips dot-directories, `node_modules`,
+  `target` and symlinks. When file access is enabled, the roots are also
+  announced in the server instructions.
+
+## Output controls
+
+Tools that return a list of results (`html_to_markdown`, `extract_markdown`,
+`extract_*`) accept:
+
+| Parameter | Description |
+|-----------|-------------|
+| `format` | `"text"` (default): one Markdown block per result. `"json"`: a single structured document (below) |
+| `offset` | Skip this many results (paging) |
+| `limit` | Return at most this many results |
+| `max_output_chars` | Cap the characters returned, up to the server's `--max-output-chars` |
+
+Results beyond `limit`, or beyond the character cap, are left out, and the
+response says how to get them (`call again with offset=N`). A single result
+larger than the cap is cut and marked `[truncated]`. Nothing is added when
+everything fits.
+
+With `format: "json"` the result is `structuredContent` (also sent as text):
+
+```json
+{
+  "results": [
+    {
+      "type": "code",
+      "text": "```rust\nfn main() {}\n```",
+      "value": "fn main() {}",
+      "lang": "rust",
+      "position": { "start": { "line": 3, "column": 1 }, "end": { "line": 5, "column": 4 } }
+    }
+  ],
+  "total": 1, "offset": 0, "returned": 1, "next_offset": null
+}
+```
+
+`type` is the node type (`h1`…`h6`, `code`, `link`, `image`, `list`, `table_cell`, …);
+type-specific attributes such as `depth`, `lang`, `url`, `title`, `alt`, `checked`,
+`row` and `column` are included when present, and `position` gives 1-based
+line/column of the node in the source document.
+
+| Option | Env var | Default | Description |
+|--------|---------|---------|-------------|
+| `--max-output-chars <n>` | `MQ_MCP_MAX_OUTPUT_CHARS` | `100000` | Most characters one tool call returns |
+
 ## Query limits
 
 Every query runs with a timeout so a runaway query can't hang the server.
@@ -138,7 +260,8 @@ Every query runs with a timeout so a runaway query can't hang the server.
 optional `timeout_ms` to override the default for a single call.
 
 Query failures (syntax errors, timeouts) are returned as tool results with
-`isError: true` and a hint, so the calling model can see the message and fix its query.
+`isError: true` and a hint, so the calling model can see the message and fix its query
+(`validate_query` pinpoints the problem without running anything).
 
 ## Transports
 

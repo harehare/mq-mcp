@@ -1,9 +1,13 @@
-pub mod server;
-
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
 use clap::Parser;
-use server::{EngineConfig, HttpConfig};
+use miette::miette;
+use mq_mcp::{
+    FileAccess,
+    files::DEFAULT_MAX_FILE_SIZE,
+    output::DEFAULT_MAX_OUTPUT_CHARS,
+    server::{self, EngineConfig, HttpConfig},
+};
 use tracing_subscriber::EnvFilter;
 
 /// Model Context Protocol server for mq
@@ -38,6 +42,27 @@ struct Cli {
     /// Maximum call stack depth for the mq evaluator (mq-lang default if omitted)
     #[arg(long = "max-call-stack-depth", env = "MQ_MCP_MAX_CALL_STACK_DEPTH")]
     max_call_stack_depth: Option<u32>,
+
+    /// Allow tools to read files under this directory through their `path` parameter
+    /// (repeatable; separate several in MQ_MCP_ROOTS with ':', or ';' on Windows).
+    /// Without any root, `path` is rejected and only inline content can be processed.
+    #[cfg_attr(
+        not(windows),
+        arg(long = "root", env = "MQ_MCP_ROOTS", value_delimiter = ':')
+    )]
+    #[cfg_attr(
+        windows,
+        arg(long = "root", env = "MQ_MCP_ROOTS", value_delimiter = ';')
+    )]
+    roots: Vec<PathBuf>,
+
+    /// Largest file that can be read through `path`, in bytes
+    #[arg(long = "max-file-size", env = "MQ_MCP_MAX_FILE_SIZE", default_value_t = DEFAULT_MAX_FILE_SIZE)]
+    max_file_size: u64,
+
+    /// Largest number of characters a single tool call may return
+    #[arg(long = "max-output-chars", env = "MQ_MCP_MAX_OUTPUT_CHARS", default_value_t = DEFAULT_MAX_OUTPUT_CHARS)]
+    max_output_chars: usize,
 }
 
 #[tokio::main]
@@ -54,6 +79,8 @@ async fn main() -> miette::Result<()> {
         timeout: Duration::from_millis(cli.timeout),
         max_timeout: Duration::from_millis(cli.max_timeout),
         max_call_stack_depth: cli.max_call_stack_depth,
+        max_output_chars: cli.max_output_chars,
+        files: FileAccess::new(cli.roots, cli.max_file_size).map_err(|e| miette!(e))?,
     };
 
     if cli.http {

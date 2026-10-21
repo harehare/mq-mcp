@@ -1463,8 +1463,10 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "toml",
  "tracing",
  "tracing-subscriber",
+ "yaml-rust2",
 ]
 
 [[package]]
