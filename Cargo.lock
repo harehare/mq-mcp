@@ -1448,7 +1448,7 @@ dependencies = [
 
 [[package]]
 name = "mq-mcp"
-version = "0.1.33"
+version = "0.2.0"
 dependencies = [
  "axum",
  "clap",
