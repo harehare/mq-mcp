@@ -8,69 +8,42 @@ use rmcp::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     },
 };
-use std::{
-    path::{Path, PathBuf},
-    sync::{Arc, Mutex},
-};
+use std::{sync::Arc, time::Duration};
 use tokio::io::{stdin, stdout};
 type McpResult = Result<CallToolResult, ErrorData>;
 
-/// Shared, mutable handle to the loaded `mq-db` store. Guarded by a plain
-/// (synchronous) `Mutex` — DB tool methods are synchronous, so there's no
-/// `.await` while held, and this avoids pulling in tokio's `sync` feature.
-type SharedDb = Arc<Mutex<mq_db::DocumentStore>>;
+/// Default per-query timeout, applied when neither the CLI nor the tool call
+/// overrides it.
+pub const DEFAULT_TIMEOUT_MS: u64 = 10_000;
+/// Default upper bound for a per-call `timeout_ms`, so a client can't lift the
+/// server's limit arbitrarily.
+pub const DEFAULT_MAX_TIMEOUT_MS: u64 = 60_000;
 
-/// Loads the store at `db_path` if it exists, otherwise starts with an
-/// empty one (so `db_index` can populate and later save it to that path).
-fn load_or_create_db(db_path: &Path) -> mq_db::DocumentStore {
-    if db_path.exists() {
-        match mq_db::DocumentStore::load(db_path) {
-            Ok(store) => return store,
-            Err(e) => tracing::error!(
-                "failed to load database at {}: {e} — starting with an empty store",
-                db_path.display()
-            ),
+/// Limits applied to every mq engine the server creates.
+#[derive(Debug, Clone, Copy)]
+pub struct EngineConfig {
+    /// Timeout used when a tool call doesn't pass `timeout_ms`.
+    pub timeout: Duration,
+    /// Largest timeout a tool call may request; larger values are clamped.
+    pub max_timeout: Duration,
+    /// Maximum call stack depth for the mq evaluator (`None` = mq-lang default).
+    pub max_call_stack_depth: Option<u32>,
+}
+
+impl Default for EngineConfig {
+    fn default() -> Self {
+        Self {
+            timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
+            max_timeout: Duration::from_millis(DEFAULT_MAX_TIMEOUT_MS),
+            max_call_stack_depth: None,
         }
     }
-    mq_db::DocumentStore::new()
 }
 
 #[derive(Clone, Default)]
 pub struct Server {
     pub tool_router: ToolRouter<Self>,
-    /// Configured `--db` path, if any. `None` means no database was
-    /// configured at startup — DB tools report a clear error rather than
-    /// silently operating on an empty, unsaveable store.
-    db_path: Option<PathBuf>,
-    db: SharedDb,
-}
-
-#[derive(Debug, rmcp::serde::Deserialize, schemars::JsonSchema)]
-struct DbSqlInput {
-    #[schemars(
-        description = "SQL query to run against the loaded mq-db database (SELECT, CREATE TABLE, INSERT INTO, DROP TABLE, DESC, SHOW TABLES). Virtual schema: documents(id, path, title, tags), blocks(id, document_id, block_type, content, pre, post, depth, lang, properties)."
-    )]
-    query: String,
-}
-
-#[derive(Debug, rmcp::serde::Deserialize, schemars::JsonSchema)]
-struct DbMqInput {
-    #[schemars(
-        description = "mq program to run against every document in the loaded mq-db database (only documents indexed from a file path — not ones added as raw strings)"
-    )]
-    code: String,
-}
-
-#[derive(Debug, rmcp::serde::Deserialize, schemars::JsonSchema)]
-struct DbIndexInput {
-    #[schemars(description = "Markdown files or directories to (re)index into the database")]
-    paths: Vec<String>,
-    #[schemars(description = "Recursively walk directories (default: false)")]
-    recursive: Option<bool>,
-    #[schemars(
-        description = "Remove catalogued documents whose path is no longer present in `paths` (default: false)"
-    )]
-    prune: Option<bool>,
+    config: EngineConfig,
 }
 
 #[derive(Debug, rmcp::serde::Deserialize, schemars::JsonSchema)]
@@ -81,6 +54,10 @@ struct QueryForHtml {
         description = "The mq query to execute. Selectors and functions listed in the available_selectors and available_functions tools can be used."
     )]
     query: Option<String>,
+    #[schemars(
+        description = "Optional timeout for this query in milliseconds. Defaults to the server's configured timeout and is capped at the server's maximum."
+    )]
+    timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, rmcp::serde::Deserialize, schemars::JsonSchema)]
@@ -91,6 +68,10 @@ struct QueryForMarkdown {
         description = "The mq query to execute. Selectors and functions listed in the available_selectors and available_functions tools can be used ."
     )]
     query: String,
+    #[schemars(
+        description = "Optional timeout for this query in milliseconds. Defaults to the server's configured timeout and is capped at the server's maximum."
+    )]
+    timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, rmcp::serde::Deserialize, schemars::JsonSchema)]
@@ -115,6 +96,10 @@ struct QueryForMarkdownBatch {
         description = "The mq query to execute against every document. Selectors and functions listed in the available_selectors and available_functions tools can be used."
     )]
     query: String,
+    #[schemars(
+        description = "Optional timeout for this query in milliseconds. Defaults to the server's configured timeout and is capped at the server's maximum."
+    )]
+    timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, rmcp::serde::Serialize, schemars::JsonSchema)]
@@ -137,114 +122,92 @@ struct ExtractSectionInput {
     title: String,
 }
 
+/// Which markdown-to-mq input shape a query runs against.
+#[derive(Clone, Copy)]
+enum Input {
+    /// Each top-level node is a separate input (`.h`, `.code`, ...).
+    PerNode,
+    /// All nodes as a single array input (section functions).
+    Aggregate,
+}
+
 impl Server {
-    fn eval_query(&self, markdown: &str, query: &str) -> McpResult {
+    fn engine(&self, timeout_ms: Option<u64>) -> mq_lang::DefaultEngine {
         let mut engine = mq_lang::DefaultEngine::default();
         engine.load_builtin_module();
+        let timeout = timeout_ms
+            .map(Duration::from_millis)
+            .unwrap_or(self.config.timeout)
+            .min(self.config.max_timeout);
+        engine.set_timeout(timeout);
+        if let Some(depth) = self.config.max_call_stack_depth {
+            engine.set_max_call_stack_depth(depth);
+        }
+        engine
+    }
 
-        let parsed = mq_markdown::Markdown::from_markdown_str(markdown).map_err(|e| {
-            ErrorData::parse_error(
-                "Failed to parse markdown",
-                Some(serde_json::Value::String(e.to_string())),
+    /// Runs `query` and returns the non-empty results as strings, or a plain
+    /// message describing what went wrong and how to fix it.
+    fn run(
+        &self,
+        nodes: Vec<mq_markdown::Node>,
+        query: &str,
+        input: Input,
+        timeout_ms: Option<u64>,
+    ) -> Result<Vec<String>, String> {
+        let mut engine = self.engine(timeout_ms);
+        let values: Vec<mq_lang::RuntimeValue> = nodes.into_iter().map(mq_lang::RuntimeValue::from).collect();
+        let output = match input {
+            Input::PerNode => engine.eval(query, values.into_iter()),
+            Input::Aggregate => engine.eval(
+                query,
+                std::iter::once(mq_lang::RuntimeValue::Array(values.into())),
+            ),
+        }
+        .map_err(|e| {
+            format!(
+                "Failed to query: {e}\nHint: check the syntax with available_functions / available_selectors; selectors start with '.', e.g. `.h1`, `.code`, `select(.code.lang == \"rust\")`."
             )
         })?;
 
-        let values = engine
-            .eval(
-                query,
-                parsed.nodes.into_iter().map(mq_lang::RuntimeValue::from),
-            )
-            .map_err(|e| {
-                ErrorData::invalid_request(
-                    "Failed to query",
-                    Some(serde_json::Value::String(e.to_string())),
-                )
-            })?;
-
-        Ok(CallToolResult::success(
-            values
-                .into_iter()
-                .filter_map(|value| {
-                    if value.is_none() || value.is_empty() {
-                        None
-                    } else {
-                        Some(ContentBlock::text(value.to_string()))
-                    }
-                })
-                .collect(),
-        ))
-    }
-
-    /// Same evaluation as `eval_query`, but returning plain strings and a
-    /// plain error message instead of an `McpResult` — used by the batch
-    /// tool, where one document's failure shouldn't abort the others.
-    fn run_query_strings(&self, markdown: &str, query: &str) -> Result<Vec<String>, String> {
-        let mut engine = mq_lang::DefaultEngine::default();
-        engine.load_builtin_module();
-
-        let parsed = mq_markdown::Markdown::from_markdown_str(markdown)
-            .map_err(|e| format!("Failed to parse markdown: {e}"))?;
-
-        let values = engine
-            .eval(
-                query,
-                parsed.nodes.into_iter().map(mq_lang::RuntimeValue::from),
-            )
-            .map_err(|e| format!("Failed to query: {e}"))?;
-
-        Ok(values
+        Ok(output
             .into_iter()
-            .filter_map(|value| {
-                if value.is_none() || value.is_empty() {
-                    None
-                } else {
-                    Some(value.to_string())
-                }
+            .flat_map(|value| match (input, value) {
+                (Input::Aggregate, mq_lang::RuntimeValue::Array(arr)) => arr.iter().cloned().collect(),
+                (_, v) => vec![v],
             })
+            .filter(|v| !v.is_none() && !v.is_empty())
+            .map(|v| v.to_string())
             .collect())
     }
 
+    /// Tool-level failures are returned as `is_error` results (not protocol
+    /// errors) so the calling model sees the message and can fix its query.
+    fn finish(result: Result<Vec<String>, String>) -> McpResult {
+        Ok(match result {
+            Ok(texts) => CallToolResult::success(texts.into_iter().map(ContentBlock::text).collect()),
+            Err(message) => CallToolResult::error(vec![ContentBlock::text(message)]),
+        })
+    }
+
+    fn parse_markdown(markdown: &str) -> Result<Vec<mq_markdown::Node>, String> {
+        mq_markdown::Markdown::from_markdown_str(markdown)
+            .map(|m| m.nodes)
+            .map_err(|e| format!("Failed to parse markdown: {e}"))
+    }
+
+    fn eval_query(&self, markdown: &str, query: &str, timeout_ms: Option<u64>) -> McpResult {
+        Self::finish(
+            Self::parse_markdown(markdown)
+                .and_then(|nodes| self.run(nodes, query, Input::PerNode, timeout_ms)),
+        )
+    }
+
     fn eval_aggregate(&self, markdown: &str, query: &str) -> McpResult {
-        let mut engine = mq_lang::DefaultEngine::default();
-        engine.load_builtin_module();
-
-        let parsed = mq_markdown::Markdown::from_markdown_str(markdown).map_err(|e| {
-            ErrorData::parse_error(
-                "Failed to parse markdown",
-                Some(serde_json::Value::String(e.to_string())),
-            )
-        })?;
-
-        let all_nodes: Vec<mq_lang::RuntimeValue> = parsed
-            .nodes
-            .into_iter()
-            .map(mq_lang::RuntimeValue::from)
-            .collect();
-        let input = mq_lang::RuntimeValue::Array(all_nodes.into());
-
-        let values = engine
-            .eval(query, std::iter::once(input))
-            .map_err(|e| {
-                ErrorData::invalid_request(
-                    "Failed to query",
-                    Some(serde_json::Value::String(e.to_string())),
-                )
-            })?;
-
-        Ok(CallToolResult::success(
-            values
-                .into_iter()
-                .flat_map(|value| match value {
-                    mq_lang::RuntimeValue::Array(arr) => arr
-                        .iter()
-                        .filter(|v| !v.is_none() && !v.is_empty())
-                        .map(|v| ContentBlock::text(v.to_string()))
-                        .collect::<Vec<_>>(),
-                    v if v.is_none() || v.is_empty() => vec![],
-                    v => vec![ContentBlock::text(v.to_string())],
-                })
-                .collect(),
-        ))
+        Self::finish(
+            Self::parse_markdown(markdown)
+                .and_then(|nodes| self.run(nodes, query, Input::Aggregate, None)),
+        )
     }
 }
 
@@ -270,178 +233,19 @@ struct SelectorInfo {
     params: Vec<String>,
 }
 
+#[derive(Debug, Default, rmcp::serde::Deserialize, schemars::JsonSchema)]
+struct FunctionFilter {
+    #[schemars(description = "Case-insensitive substring matched against function names and descriptions")]
+    filter: Option<String>,
+}
+
 #[tool_router]
 impl Server {
-    pub fn new(db_path: Option<PathBuf>) -> Result<Self, Box<dyn std::error::Error>> {
-        let db = db_path
-            .as_deref()
-            .map(load_or_create_db)
-            .unwrap_or_default();
-        Ok(Self {
-            tool_router: Self::tool_router(),
-            db_path,
-            db: Arc::new(Mutex::new(db)),
-        })
-    }
-
-    /// Builds a new `Server` sharing an already-loaded database — used by
-    /// the Streamable HTTP transport, which constructs one `Server` per
-    /// session and would otherwise reload the store from disk every time.
-    fn with_shared_db(db_path: Option<PathBuf>, db: SharedDb) -> Self {
+    pub fn new(config: EngineConfig) -> Self {
         Self {
             tool_router: Self::tool_router(),
-            db_path,
-            db,
+            config,
         }
-    }
-
-    /// Returns the locked store, or a descriptive error if no `--db` path
-    /// was configured at startup.
-    fn require_db(&self) -> Result<std::sync::MutexGuard<'_, mq_db::DocumentStore>, ErrorData> {
-        if self.db_path.is_none() {
-            return Err(ErrorData::invalid_request(
-                "no database configured — restart mq-mcp with --db <path> to enable db_* tools",
-                None,
-            ));
-        }
-        Ok(self.db.lock().unwrap_or_else(|e| e.into_inner()))
-    }
-
-    #[tool(
-        description = "Run a read-only SQL query against the loaded mq-db database and return matching rows as JSON. Requires mq-mcp to have been started with --db <path>."
-    )]
-    fn db_sql(&self, Parameters(DbSqlInput { query }): Parameters<DbSqlInput>) -> McpResult {
-        let store = self.require_db()?;
-        let engine = mq_db::SqlEngine::new(&store).map_err(|e| {
-            ErrorData::internal_error(
-                "Failed to build SQL engine",
-                Some(serde_json::Value::String(e.to_string())),
-            )
-        })?;
-        let out = engine.execute(&query).map_err(|e| {
-            ErrorData::invalid_request(
-                "SQL query failed",
-                Some(serde_json::Value::String(e.to_string())),
-            )
-        })?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(out.to_json())]))
-    }
-
-    #[tool(
-        description = "Run an mq program against every document in the loaded mq-db database and return the results. Requires mq-mcp to have been started with --db <path>."
-    )]
-    fn db_mq(&self, Parameters(DbMqInput { code }): Parameters<DbMqInput>) -> McpResult {
-        let store = self.require_db()?;
-        let results = mq_db::MqEngine::eval_store(&code, &store).map_err(|e| {
-            ErrorData::invalid_request(
-                "mq query failed",
-                Some(serde_json::Value::String(e.to_string())),
-            )
-        })?;
-        Ok(CallToolResult::success(
-            results.into_iter().map(ContentBlock::text).collect(),
-        ))
-    }
-
-    #[tool(
-        description = "List every document currently indexed in the loaded mq-db database (id, path, title, tags, block count). Requires mq-mcp to have been started with --db <path>."
-    )]
-    fn db_list_documents(&self) -> McpResult {
-        let store = self.require_db()?;
-        let docs: Vec<serde_json::Value> = store
-            .documents()
-            .iter()
-            .map(|d| {
-                serde_json::json!({
-                    "id": d.id,
-                    "path": d.path.as_ref().and_then(|p| p.to_str()),
-                    "title": d.zone_maps.title,
-                    "tags": d.zone_maps.tags,
-                    "block_count": d.block_count,
-                })
-            })
-            .collect();
-        Ok(CallToolResult::success(vec![ContentBlock::text(
-            serde_json::to_string(&docs).unwrap_or_default(),
-        )]))
-    }
-
-    #[tool(
-        description = "Return block-type and code-language statistics for the loaded mq-db database. Requires mq-mcp to have been started with --db <path>."
-    )]
-    fn db_stats(&self) -> McpResult {
-        let store = self.require_db()?;
-        let stats = store.stats();
-        let json = serde_json::json!({
-            "documents": stats.documents,
-            "blocks": stats.blocks,
-            "block_type_counts": stats.block_type_counts.iter()
-                .map(|(bt, count)| serde_json::json!({"block_type": bt.as_str(), "count": count}))
-                .collect::<Vec<_>>(),
-            "code_lang_counts": stats.code_lang_counts.iter()
-                .map(|(lang, count)| serde_json::json!({"lang": lang, "count": count}))
-                .collect::<Vec<_>>(),
-        });
-        Ok(CallToolResult::success(vec![ContentBlock::text(
-            json.to_string(),
-        )]))
-    }
-
-    #[tool(
-        description = "Index or re-index Markdown files/directories into the loaded mq-db database, then persist it to the configured --db path. Skips files whose content hasn't changed since the last index; use `prune` to drop catalogued documents whose file no longer exists. Requires mq-mcp to have been started with --db <path>."
-    )]
-    fn db_index(
-        &self,
-        Parameters(DbIndexInput {
-            paths,
-            recursive,
-            prune,
-        }): Parameters<DbIndexInput>,
-    ) -> McpResult {
-        let db_path = self.db_path.clone().ok_or_else(|| {
-            ErrorData::invalid_request(
-                "no database configured — restart mq-mcp with --db <path> to enable db_* tools",
-                None,
-            )
-        })?;
-
-        let files = mq_db::discover::collect_markdown_files(
-            &paths.iter().map(PathBuf::from).collect::<Vec<_>>(),
-            recursive.unwrap_or(false),
-        );
-        if files.is_empty() {
-            return Err(ErrorData::invalid_request(
-                "No Markdown files found in the given paths",
-                None,
-            ));
-        }
-
-        let mut store = self.db.lock().unwrap_or_else(|e| e.into_inner());
-        let report = store
-            .reindex_paths(&files, prune.unwrap_or(false))
-            .map_err(|e| {
-                ErrorData::internal_error(
-                    "Reindex failed",
-                    Some(serde_json::Value::String(e.to_string())),
-                )
-            })?;
-        store.save(&db_path).map_err(|e| {
-            ErrorData::internal_error(
-                "Failed to save database",
-                Some(serde_json::Value::String(e.to_string())),
-            )
-        })?;
-
-        let json = serde_json::json!({
-            "added": report.added.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
-            "updated": report.updated.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
-            "unchanged": report.unchanged,
-            "removed": report.removed.iter().map(|p| p.to_string_lossy()).collect::<Vec<_>>(),
-            "failed": report.failed.iter().map(|(p, e)| serde_json::json!({"path": p.to_string_lossy(), "error": e})).collect::<Vec<_>>(),
-        });
-        Ok(CallToolResult::success(vec![ContentBlock::text(
-            json.to_string(),
-        )]))
     }
 
     #[tool(
@@ -449,51 +253,37 @@ impl Server {
     )]
     fn html_to_markdown(
         &self,
-        Parameters(QueryForHtml { html, query }): Parameters<QueryForHtml>,
+        Parameters(QueryForHtml {
+            html,
+            query,
+            timeout_ms,
+        }): Parameters<QueryForHtml>,
     ) -> McpResult {
-        let mut engine = mq_lang::DefaultEngine::default();
-        engine.load_builtin_module();
-
-        let markdown = mq_markdown::Markdown::from_html_str(&html).map_err(|e| {
-            ErrorData::parse_error(
-                "Failed to parse html",
-                Some(serde_json::Value::String(e.to_string())),
-            )
-        })?;
-        let values = engine
-            .eval(
-                &query.unwrap_or("identity()".to_string()),
-                markdown.nodes.into_iter().map(mq_lang::RuntimeValue::from),
-            )
-            .map_err(|e| {
-                ErrorData::invalid_request(
-                    "Failed to query",
-                    Some(serde_json::Value::String(e.to_string())),
+        let result = mq_markdown::Markdown::from_html_str(&html)
+            .map_err(|e| format!("Failed to parse html: {e}"))
+            .and_then(|m| {
+                self.run(
+                    m.nodes,
+                    query.as_deref().unwrap_or("identity()"),
+                    Input::PerNode,
+                    timeout_ms,
                 )
-            })?;
-
-        Ok(CallToolResult::success(
-            values
-                .into_iter()
-                .filter_map(|value| {
-                    if value.is_none() || value.is_empty() {
-                        None
-                    } else {
-                        Some(ContentBlock::text(value.to_string()))
-                    }
-                })
-                .collect::<Vec<_>>(),
-        ))
+            });
+        Self::finish(result)
     }
 
     #[tool(
-        description = "Extract from markdown content using a custom mq query. Selectors and functions listed in the available_selectors and available_functions tools can be used."
+        description = "Run a custom mq query on markdown content. Prefer the dedicated extract_* tools for simple cases. Examples: `.h2` (all h2 headings), `select(.code.lang == \"rust\")` (rust code blocks), `.link | to_text()` (link texts), `select(contains(\"TODO\"))`. On a syntax error, check available_functions / available_selectors. Queries exceeding the timeout fail; pass timeout_ms to adjust (capped by the server)."
     )]
     fn extract_markdown(
         &self,
-        Parameters(QueryForMarkdown { markdown, query }): Parameters<QueryForMarkdown>,
+        Parameters(QueryForMarkdown {
+            markdown,
+            query,
+            timeout_ms,
+        }): Parameters<QueryForMarkdown>,
     ) -> McpResult {
-        self.eval_query(&markdown, &query)
+        self.eval_query(&markdown, &query, timeout_ms)
     }
 
     #[tool(
@@ -501,12 +291,18 @@ impl Server {
     )]
     fn extract_markdown_batch(
         &self,
-        Parameters(QueryForMarkdownBatch { documents, query }): Parameters<QueryForMarkdownBatch>,
+        Parameters(QueryForMarkdownBatch {
+            documents,
+            query,
+            timeout_ms,
+        }): Parameters<QueryForMarkdownBatch>,
     ) -> McpResult {
         let results: Vec<BatchDocumentResult> = documents
             .into_iter()
             .enumerate()
-            .map(|(index, doc)| match self.run_query_strings(&doc.markdown, &query) {
+            .map(|(index, doc)| match Self::parse_markdown(&doc.markdown)
+                .and_then(|nodes| self.run(nodes, &query, Input::PerNode, timeout_ms))
+            {
                 Ok(results) => BatchDocumentResult {
                     index,
                     id: doc.id,
@@ -537,7 +333,7 @@ impl Server {
         &self,
         Parameters(MarkdownInput { markdown }): Parameters<MarkdownInput>,
     ) -> McpResult {
-        self.eval_query(&markdown, ".h")
+        self.eval_query(&markdown, ".h", None)
     }
 
     #[tool(description = "Extract all fenced code blocks from markdown content.")]
@@ -545,7 +341,7 @@ impl Server {
         &self,
         Parameters(MarkdownInput { markdown }): Parameters<MarkdownInput>,
     ) -> McpResult {
-        self.eval_query(&markdown, ".code")
+        self.eval_query(&markdown, ".code", None)
     }
 
     #[tool(description = "Extract all unchecked task list items (todos) from markdown content.")]
@@ -553,7 +349,7 @@ impl Server {
         &self,
         Parameters(MarkdownInput { markdown }): Parameters<MarkdownInput>,
     ) -> McpResult {
-        self.eval_query(&markdown, ".todo")
+        self.eval_query(&markdown, ".todo", None)
     }
 
     #[tool(description = "Extract all checked task list items (done tasks) from markdown content.")]
@@ -561,7 +357,7 @@ impl Server {
         &self,
         Parameters(MarkdownInput { markdown }): Parameters<MarkdownInput>,
     ) -> McpResult {
-        self.eval_query(&markdown, ".done")
+        self.eval_query(&markdown, ".done", None)
     }
 
     #[tool(description = "Extract all links from markdown content.")]
@@ -569,7 +365,7 @@ impl Server {
         &self,
         Parameters(MarkdownInput { markdown }): Parameters<MarkdownInput>,
     ) -> McpResult {
-        self.eval_query(&markdown, ".link")
+        self.eval_query(&markdown, ".link", None)
     }
 
     #[tool(description = "Extract all images from markdown content.")]
@@ -577,7 +373,7 @@ impl Server {
         &self,
         Parameters(MarkdownInput { markdown }): Parameters<MarkdownInput>,
     ) -> McpResult {
-        self.eval_query(&markdown, ".image")
+        self.eval_query(&markdown, ".image", None)
     }
 
     #[tool(description = "Extract all tables from markdown content.")]
@@ -585,7 +381,7 @@ impl Server {
         &self,
         Parameters(MarkdownInput { markdown }): Parameters<MarkdownInput>,
     ) -> McpResult {
-        self.eval_query(&markdown, ".table")
+        self.eval_query(&markdown, ".table", None)
     }
 
     #[tool(description = "Extract all paragraph text nodes from markdown content.")]
@@ -593,7 +389,7 @@ impl Server {
         &self,
         Parameters(MarkdownInput { markdown }): Parameters<MarkdownInput>,
     ) -> McpResult {
-        self.eval_query(&markdown, ".text")
+        self.eval_query(&markdown, ".text", None)
     }
 
     #[tool(description = "Extract all blockquotes from markdown content.")]
@@ -601,7 +397,7 @@ impl Server {
         &self,
         Parameters(MarkdownInput { markdown }): Parameters<MarkdownInput>,
     ) -> McpResult {
-        self.eval_query(&markdown, ".blockquote")
+        self.eval_query(&markdown, ".blockquote", None)
     }
 
     #[tool(
@@ -644,8 +440,13 @@ impl Server {
         )
     }
 
-    #[tool(description = "Get available selectors that can be used in mq query.")]
-    fn available_functions(&self) -> McpResult {
+    #[tool(
+        description = "List mq functions usable in queries (name, description, params). Pass `filter` to match names/descriptions case-insensitively and keep the output small."
+    )]
+    fn available_functions(
+        &self,
+        Parameters(FunctionFilter { filter }): Parameters<FunctionFilter>,
+    ) -> McpResult {
         let hir = mq_hir::Hir::default();
         let mut functions = Vec::with_capacity(256);
 
@@ -666,6 +467,13 @@ impl Server {
                 description: builtin_doc.description.to_string(),
                 params: builtin_doc.params.iter().map(|p| p.to_string()).collect(),
                 is_builtin: true,
+            });
+        }
+
+        if let Some(filter) = filter.as_deref().map(str::to_lowercase) {
+            functions.retain(|f| {
+                f.name.to_lowercase().contains(&filter)
+                    || f.description.to_lowercase().contains(&filter)
             });
         }
 
@@ -715,13 +523,19 @@ impl ServerHandler for Server {
                 .build(),
         )
         .with_protocol_version(ProtocolVersion::V_2025_06_18)
-        .with_instructions("mq is a tool for processing markdown content with a jq-like syntax.")
+        .with_instructions(
+            "mq is a tool for processing markdown content with a jq-like syntax. \
+             Start with the dedicated extract_* tools (headings, code blocks, links, sections, toc...). \
+             For anything else use extract_markdown (or extract_markdown_batch for many documents, html_to_markdown for HTML) with an mq query such as `.h2` or `select(.code.lang == \"rust\")`. \
+             If a query fails, the error explains why; look up valid names with available_functions (use `filter`) and available_selectors. \
+             Queries have a timeout; pass `timeout_ms` to raise it up to the server's maximum.",
+        )
     }
 }
 
-pub async fn start(db_path: Option<PathBuf>) -> miette::Result<()> {
+pub async fn start(config: EngineConfig) -> miette::Result<()> {
     let transport = (stdin(), stdout());
-    let server = Server::new(db_path).expect("Failed to create server");
+    let server = Server::new(config);
 
     let service = server.serve(transport).await.map_err(|e| miette!(e))?;
     service.waiting().await.map_err(|e| miette!(e))?;
@@ -771,23 +585,14 @@ async fn require_bearer_token(
     }
 }
 
-pub async fn start_http(config: HttpConfig, db_path: Option<PathBuf>) -> miette::Result<()> {
+pub async fn start_http(config: HttpConfig, engine: EngineConfig) -> miette::Result<()> {
     let mut server_config = StreamableHttpServerConfig::default();
     if !config.allowed_hosts.is_empty() {
         server_config.allowed_hosts.extend(config.allowed_hosts);
     }
 
-    // Load the database once and share it across every session — sessions
-    // would otherwise each reload the store from disk (and not observe each
-    // other's `db_index` writes).
-    let shared_db: SharedDb = Arc::new(Mutex::new(
-        db_path
-            .as_deref()
-            .map(load_or_create_db)
-            .unwrap_or_default(),
-    ));
     let service = StreamableHttpService::new(
-        move || Ok(Server::with_shared_db(db_path.clone(), shared_db.clone())),
+        move || Ok(Server::new(engine)),
         Arc::new(LocalSessionManager::default()),
         server_config,
     );
@@ -825,6 +630,7 @@ mod tests {
         QueryForHtml {
             html: "<h1>Test Heading</h1><p>This is a test paragraph.</p>".to_string(),
             query: Some(".h1".to_string()),
+            timeout_ms: None,
         },
         Ok("# Test Heading")
     )]
@@ -832,6 +638,7 @@ mod tests {
         QueryForHtml {
             html: "<h1>Test Heading</h1><p>This is a test paragraph.</p>".to_string(),
             query: Some(".text".to_string()),
+            timeout_ms: None,
         },
         Ok("Test Heading\n\nThis is a test paragraph.")
     )]
@@ -839,6 +646,7 @@ mod tests {
         QueryForHtml {
             html: "<h1>Test Heading</h1><p>This is a test paragraph.</p>".to_string(),
             query: None,
+            timeout_ms: None,
         },
         Ok("# Test Heading\n\nThis is a test paragraph.")
     )]
@@ -846,6 +654,7 @@ mod tests {
         QueryForHtml {
             html: "<h1>Test Heading".to_string(), // malformed HTML
             query: Some(".h1".to_string()),
+            timeout_ms: None,
         },
         Ok("# Test Heading")
     )]
@@ -853,6 +662,7 @@ mod tests {
         QueryForHtml {
             html: "<h1>Test Heading</h1>".to_string(),
             query: Some("not_a_function(".to_string()), // invalid query
+            timeout_ms: None,
         },
         Err("Failed to query")
     )]
@@ -860,7 +670,7 @@ mod tests {
         #[case] query: QueryForHtml,
         #[case] expected: Result<&'static str, &'static str>,
     ) {
-        let server = Server::new(None).expect("Failed to create server");
+        let server = Server::new(EngineConfig::default());
         let result = server.html_to_markdown(Parameters(query));
         match expected {
             Ok(expected_text) => {
@@ -876,8 +686,13 @@ mod tests {
                 assert_eq!(actual, expected_text);
             }
             Err(expected_err) => {
-                let err = result.expect_err("Expected error result");
-                let msg = format!("{err}");
+                let result = result.expect("tool errors are returned as is_error results");
+                assert!(result.is_error.unwrap_or_default());
+                let msg = result
+                    .content
+                    .iter()
+                    .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+                    .collect::<String>();
                 assert!(
                     msg.contains(expected_err),
                     "Error message '{msg}' does not contain expected '{expected_err}'"
@@ -891,6 +706,7 @@ mod tests {
         QueryForMarkdown {
             markdown: "# Test Heading".to_string(),
             query: ".h1".to_string(),
+            timeout_ms: None,
         },
         Ok("# Test Heading")
     )]
@@ -898,6 +714,7 @@ mod tests {
         QueryForMarkdown {
             markdown: "# Test Heading\n\nThis is a test paragraph.".to_string(),
             query: ".text".to_string(),
+            timeout_ms: None,
         },
         Ok("Test Heading\n\nThis is a test paragraph.")
     )]
@@ -905,6 +722,7 @@ mod tests {
         QueryForMarkdown {
             markdown: "# Test Heading\n\nThis is a test paragraph.".to_string(),
             query: "identity()".to_string(),
+            timeout_ms: None,
         },
         Ok("# Test Heading\n\nThis is a test paragraph.")
     )]
@@ -912,6 +730,7 @@ mod tests {
         QueryForMarkdown {
             markdown: "# Test Heading".to_string(),
             query: "not_a_function(".to_string(), // invalid query
+            timeout_ms: None,
         },
         Err("Failed to query")
     )]
@@ -919,6 +738,7 @@ mod tests {
         QueryForMarkdown {
             markdown: "".to_string(),
             query: ".h1".to_string(),
+            timeout_ms: None,
         },
         Ok("")
     )]
@@ -926,7 +746,7 @@ mod tests {
         #[case] query: QueryForMarkdown,
         #[case] expected: Result<&'static str, &'static str>,
     ) {
-        let server = Server::new(None).expect("Failed to create server");
+        let server = Server::new(EngineConfig::default());
         let result = server.extract_markdown(Parameters(query));
         match expected {
             Ok(expected_text) => {
@@ -941,8 +761,13 @@ mod tests {
                 assert_eq!(actual, expected_text);
             }
             Err(expected_err) => {
-                let err = result.expect_err("Expected error result");
-                let msg = format!("{err}");
+                let result = result.expect("tool errors are returned as is_error results");
+                assert!(result.is_error.unwrap_or_default());
+                let msg = result
+                    .content
+                    .iter()
+                    .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+                    .collect::<String>();
                 assert!(
                     msg.contains(expected_err),
                     "Error message '{msg}' does not contain expected '{expected_err}'"
@@ -953,7 +778,7 @@ mod tests {
 
     #[test]
     fn test_extract_markdown_batch_mixes_success_and_per_document_error() {
-        let server = Server::new(None).expect("Failed to create server");
+        let server = Server::new(EngineConfig::default());
         let result = server
             .extract_markdown_batch(Parameters(QueryForMarkdownBatch {
                 documents: vec![
@@ -967,6 +792,7 @@ mod tests {
                     },
                 ],
                 query: ".h1".to_string(),
+            timeout_ms: None,
             }))
             .expect("batch call should succeed even if a document's query fails");
 
@@ -985,7 +811,7 @@ mod tests {
 
     #[test]
     fn test_extract_markdown_batch_reports_error_without_aborting_other_documents() {
-        let server = Server::new(None).expect("Failed to create server");
+        let server = Server::new(EngineConfig::default());
         let result = server
             .extract_markdown_batch(Parameters(QueryForMarkdownBatch {
                 documents: vec![
@@ -999,6 +825,7 @@ mod tests {
                     },
                 ],
                 query: "not_a_function(".to_string(),
+            timeout_ms: None,
             }))
             .expect("batch call itself should still succeed");
 
@@ -1036,7 +863,7 @@ mod tests {
     #[case("# H1\n\n## H2\n\n### H3", vec!["# H1", "## H2", "### H3"])]
     #[case("No headings here.", vec![])]
     fn test_extract_headings(#[case] markdown: &str, #[case] expected: Vec<&str>) {
-        let server = Server::new(None).unwrap();
+        let server = Server::new(EngineConfig::default());
         let result = server
             .extract_headings(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -1049,7 +876,7 @@ mod tests {
     #[case("```rust\nfn main() {}\n```\n\n```python\nprint(\"hi\")\n```", 2)]
     #[case("No code blocks.", 0)]
     fn test_extract_code_blocks(#[case] markdown: &str, #[case] count: usize) {
-        let server = Server::new(None).unwrap();
+        let server = Server::new(EngineConfig::default());
         let result = server
             .extract_code_blocks(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -1063,7 +890,7 @@ mod tests {
     #[case("- [x] Done task", vec![])]
     #[case("No list.", vec![])]
     fn test_extract_todos(#[case] markdown: &str, #[case] expected: Vec<&str>) {
-        let server = Server::new(None).unwrap();
+        let server = Server::new(EngineConfig::default());
         let result = server
             .extract_todos(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -1076,7 +903,7 @@ mod tests {
     #[case("- [ ] Todo\n- [x] Done", vec!["- [x] Done"])]
     #[case("- [ ] Only todo", vec![])]
     fn test_extract_done_tasks(#[case] markdown: &str, #[case] expected: Vec<&str>) {
-        let server = Server::new(None).unwrap();
+        let server = Server::new(EngineConfig::default());
         let result = server
             .extract_done_tasks(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -1089,7 +916,7 @@ mod tests {
     #[case("[Google](https://google.com) and [Rust](https://rust-lang.org)", 2)]
     #[case("No links here.", 0)]
     fn test_extract_links(#[case] markdown: &str, #[case] count: usize) {
-        let server = Server::new(None).unwrap();
+        let server = Server::new(EngineConfig::default());
         let result = server
             .extract_links(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -1102,7 +929,7 @@ mod tests {
     #[case("![Alt](img.png) and ![Logo](logo.svg)", 2)]
     #[case("No images.", 0)]
     fn test_extract_images(#[case] markdown: &str, #[case] count: usize) {
-        let server = Server::new(None).unwrap();
+        let server = Server::new(EngineConfig::default());
         let result = server
             .extract_images(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -1116,7 +943,7 @@ mod tests {
     #[case("| A | B |\n|---|---|\n| 1 | 2 |", 4)]
     #[case("No tables.", 0)]
     fn test_extract_tables(#[case] markdown: &str, #[case] count: usize) {
-        let server = Server::new(None).unwrap();
+        let server = Server::new(EngineConfig::default());
         let result = server
             .extract_tables(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -1130,7 +957,7 @@ mod tests {
     // from_html_str treats bare "# Only heading" as a single text paragraph (not a heading)
     #[case("# Only heading", 1)]
     fn test_extract_text(#[case] markdown: &str, #[case] count: usize) {
-        let server = Server::new(None).unwrap();
+        let server = Server::new(EngineConfig::default());
         let result = server
             .extract_text(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -1143,7 +970,7 @@ mod tests {
     #[case("> A quote.\n\n> Another quote.", 2)]
     #[case("No blockquotes.", 0)]
     fn test_extract_blockquotes(#[case] markdown: &str, #[case] count: usize) {
-        let server = Server::new(None).unwrap();
+        let server = Server::new(EngineConfig::default());
         let result = server
             .extract_blockquotes(Parameters(MarkdownInput {
                 markdown: markdown.to_string(),
@@ -1167,7 +994,7 @@ Use it like this.\n";
 
     #[test]
     fn test_extract_sections() {
-        let server = Server::new(None).unwrap();
+        let server = Server::new(EngineConfig::default());
         let result = server
             .extract_sections(Parameters(MarkdownInput {
                 markdown: SECTION_MD.to_string(),
@@ -1185,7 +1012,7 @@ Use it like this.\n";
     #[case("Installation", true)]
     #[case("Nonexistent", false)]
     fn test_extract_section(#[case] title: &str, #[case] should_have_content: bool) {
-        let server = Server::new(None).unwrap();
+        let server = Server::new(EngineConfig::default());
         let result = server
             .extract_section(Parameters(ExtractSectionInput {
                 markdown: SECTION_MD.to_string(),
@@ -1202,7 +1029,7 @@ Use it like this.\n";
     #[test]
     fn test_extract_section_title_with_special_chars() {
         let md = "## Section \"quoted\"\n\nContent.";
-        let server = Server::new(None).unwrap();
+        let server = Server::new(EngineConfig::default());
         let result = server
             .extract_section(Parameters(ExtractSectionInput {
                 markdown: md.to_string(),
@@ -1215,7 +1042,7 @@ Use it like this.\n";
 
     #[test]
     fn test_extract_toc() {
-        let server = Server::new(None).unwrap();
+        let server = Server::new(EngineConfig::default());
         let result = server
             .extract_toc(Parameters(MarkdownInput {
                 markdown: SECTION_MD.to_string(),
@@ -1231,15 +1058,17 @@ Use it like this.\n";
 
     #[test]
     fn test_available_functions() {
-        let server = Server::new(None).expect("Failed to create server");
-        let result = server.available_functions().unwrap();
+        let server = Server::new(EngineConfig::default());
+        let result = server
+            .available_functions(Parameters(FunctionFilter::default()))
+            .unwrap();
         assert!(!result.is_error.unwrap_or_default());
         assert_eq!(result.content.into_iter().len(), 1);
     }
 
     #[test]
     fn test_available_selectors() {
-        let server = Server::new(None).expect("Failed to create server");
+        let server = Server::new(EngineConfig::default());
         let result = server.available_selectors().unwrap();
         assert!(!result.is_error.unwrap_or_default());
         assert_eq!(result.content.into_iter().len(), 1);
@@ -1247,7 +1076,7 @@ Use it like this.\n";
 
     #[test]
     fn test_get_info() {
-        let server = Server::new(None).expect("Failed to create server");
+        let server = Server::new(EngineConfig::default());
         let info = server.get_info();
         assert_eq!(info.protocol_version, ProtocolVersion::V_2025_06_18);
         assert!(info.instructions.is_some());
@@ -1258,82 +1087,36 @@ Use it like this.\n";
         );
     }
 
-    // ── db_* tools ───────────────────────────────────────────────────────────
-
     #[test]
-    fn db_tools_report_error_without_configured_db() {
-        let server = Server::new(None).expect("Failed to create server");
-        let err = server
-            .db_sql(Parameters(DbSqlInput {
-                query: "SELECT 1".to_string(),
+    fn test_available_functions_filter() {
+        let server = Server::new(EngineConfig::default());
+        let result = server
+            .available_functions(Parameters(FunctionFilter {
+                filter: Some("upcase".to_string()),
             }))
-            .expect_err("expected an error with no --db configured");
-        assert!(err.message.contains("no database configured"));
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_str(&ok_texts(result)[0]).unwrap();
+        let functions = json["functions"].as_array().unwrap();
+        assert!(!functions.is_empty());
+        assert!(functions.len() < 20);
     }
 
     #[test]
-    fn db_index_then_sql_and_mq_and_list_and_stats_round_trip() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("a.md"), "# Title\n\nHello world\n").unwrap();
-        let db_path = dir.path().join("store.mq-db");
-
-        let server = Server::new(Some(db_path)).expect("Failed to create server");
-
-        let index_result = server
-            .db_index(Parameters(DbIndexInput {
-                paths: vec![dir.path().to_string_lossy().to_string()],
-                recursive: Some(false),
-                prune: Some(false),
+    fn test_timeout_is_enforced_and_clamped() {
+        let server = Server::new(EngineConfig {
+            max_timeout: Duration::from_millis(50),
+            ..EngineConfig::default()
+        });
+        // Requested 1h, clamped to 50ms: an endless loop must be cut off.
+        let result = server
+            .extract_markdown(Parameters(QueryForMarkdown {
+                markdown: "# a".to_string(),
+                query: "while(true): 1 end".to_string(),
+                timeout_ms: Some(3_600_000),
             }))
-            .expect("db_index should succeed");
-        let index_json = ok_texts(index_result).join("");
-        assert!(index_json.contains("\"added\":[") && index_json.contains("a.md"));
-
-        let sql_result = server
-            .db_sql(Parameters(DbSqlInput {
-                query: "SELECT content FROM blocks WHERE block_type = 'heading'".to_string(),
-            }))
-            .expect("db_sql should succeed");
-        assert!(ok_texts(sql_result).join("").contains("Title"));
-
-        let mq_result = server
-            .db_mq(Parameters(DbMqInput {
-                code: ".h1".to_string(),
-            }))
-            .expect("db_mq should succeed");
-        assert!(ok_texts(mq_result).join("").contains("Title"));
-
-        let list_result = server
-            .db_list_documents()
-            .expect("db_list_documents should succeed");
-        let list_json = ok_texts(list_result).join("");
-        assert!(list_json.contains("a.md"));
-
-        let stats_result = server.db_stats().expect("db_stats should succeed");
-        let stats_json = ok_texts(stats_result).join("");
-        assert!(stats_json.contains("\"documents\":1"));
-    }
-
-    #[test]
-    fn db_index_second_run_reports_unchanged() {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::write(dir.path().join("a.md"), "# Title\n\nHello world\n").unwrap();
-        let db_path = dir.path().join("store.mq-db");
-
-        let server = Server::new(Some(db_path)).expect("Failed to create server");
-        let index_input = || DbIndexInput {
-            paths: vec![dir.path().to_string_lossy().to_string()],
-            recursive: Some(false),
-            prune: Some(false),
-        };
-
-        server
-            .db_index(Parameters(index_input()))
-            .expect("first db_index should succeed");
-        let second = server
-            .db_index(Parameters(index_input()))
-            .expect("second db_index should succeed");
-        let second_json = ok_texts(second).join("");
-        assert!(second_json.contains("\"unchanged\":1"));
+            .unwrap();
+        assert!(result.is_error.unwrap_or_default());
+        let msg = result.content[0].as_text().unwrap().text.to_lowercase();
+        assert!(msg.contains("timed out"), "unexpected error: {msg}");
     }
 }

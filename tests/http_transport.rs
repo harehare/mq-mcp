@@ -1,9 +1,6 @@
-use std::path::PathBuf;
-
-use mq_mcp::server::{HttpConfig, start_http};
+use mq_mcp::server::{EngineConfig, HttpConfig, start_http};
 
 async fn spawn_server_with_config(
-    db_path: Option<PathBuf>,
     bearer_token: Option<String>,
 ) -> (String, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -22,7 +19,7 @@ async fn spawn_server_with_config(
                     allowed_hosts: vec![],
                     bearer_token,
                 },
-                db_path,
+                EngineConfig::default(),
             )
             .await;
         }
@@ -45,12 +42,8 @@ async fn spawn_server_with_config(
     (format!("http://{addr}/mcp"), handle)
 }
 
-async fn spawn_server_with_db(db_path: Option<PathBuf>) -> (String, tokio::task::JoinHandle<()>) {
-    spawn_server_with_config(db_path, None).await
-}
-
 async fn spawn_server() -> (String, tokio::task::JoinHandle<()>) {
-    spawn_server_with_db(None).await
+    spawn_server_with_config(None).await
 }
 
 async fn init_session(client: &reqwest::Client, url: &str) -> String {
@@ -116,7 +109,7 @@ async fn test_streamable_http_initialize_and_call_tool() {
 
 #[tokio::test]
 async fn test_bearer_token_rejects_missing_or_wrong_token() {
-    let (url, handle) = spawn_server_with_config(None, Some("secret".to_string())).await;
+    let (url, handle) = spawn_server_with_config(Some("secret".to_string())).await;
     let client = reqwest::Client::new();
 
     let no_token_status = client
@@ -151,7 +144,7 @@ async fn test_bearer_token_rejects_missing_or_wrong_token() {
 
 #[tokio::test]
 async fn test_bearer_token_accepts_correct_token() {
-    let (url, handle) = spawn_server_with_config(None, Some("secret".to_string())).await;
+    let (url, handle) = spawn_server_with_config(Some("secret".to_string())).await;
     let client = reqwest::Client::new();
 
     let response = client
@@ -170,54 +163,3 @@ async fn test_bearer_token_accepts_correct_token() {
     handle.abort();
 }
 
-#[tokio::test]
-async fn test_streamable_http_db_index_then_sql() {
-    let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("a.md"), "# Title\n\nHello world\n").unwrap();
-    let db_path = dir.path().join("store.mq-db");
-
-    let (url, handle) = spawn_server_with_db(Some(db_path)).await;
-    let client = reqwest::Client::new();
-    let session_id = init_session(&client, &url).await;
-
-    let dir_path = dir.path().to_string_lossy().to_string();
-    let index_body = client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .header("Accept", "application/json, text/event-stream")
-        .header("mcp-session-id", &session_id)
-        .body(format!(
-            r##"{{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{{"name":"db_index","arguments":{{"paths":["{dir_path}"]}}}}}}"##
-        ))
-        .send()
-        .await
-        .expect("db_index call")
-        .text()
-        .await
-        .expect("db_index body");
-    assert!(
-        index_body.contains("a.md"),
-        "unexpected db_index response: {index_body}"
-    );
-
-    let sql_body = client
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .header("Accept", "application/json, text/event-stream")
-        .header("mcp-session-id", &session_id)
-        .body(
-            r##"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"db_sql","arguments":{"query":"SELECT content FROM blocks WHERE block_type = 'heading'"}}}"##,
-        )
-        .send()
-        .await
-        .expect("db_sql call")
-        .text()
-        .await
-        .expect("db_sql body");
-    assert!(
-        sql_body.contains("Title"),
-        "unexpected db_sql response: {sql_body}"
-    );
-
-    handle.abort();
-}
