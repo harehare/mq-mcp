@@ -1,9 +1,9 @@
 pub mod server;
 
-use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::Parser;
-use server::HttpConfig;
+use server::{EngineConfig, HttpConfig};
 use tracing_subscriber::EnvFilter;
 
 /// Model Context Protocol server for mq
@@ -27,12 +27,17 @@ struct Cli {
     #[arg(long = "bearer-token", env = "MQ_MCP_BEARER_TOKEN")]
     bearer_token: Option<String>,
 
-    /// Path to an mq-db (.mq-db) store file to expose via the db_* tools
-    /// (db_sql, db_mq, db_list_documents, db_stats, db_index). If it doesn't
-    /// exist yet, db_index will create it on first use. Omit to disable the
-    /// db_* tools entirely.
-    #[arg(long)]
-    db: Option<PathBuf>,
+    /// Default timeout for a query, in milliseconds
+    #[arg(long, env = "MQ_MCP_TIMEOUT_MS", default_value_t = server::DEFAULT_TIMEOUT_MS)]
+    timeout: u64,
+
+    /// Largest timeout a tool call may request via `timeout_ms`, in milliseconds
+    #[arg(long = "max-timeout", env = "MQ_MCP_MAX_TIMEOUT_MS", default_value_t = server::DEFAULT_MAX_TIMEOUT_MS)]
+    max_timeout: u64,
+
+    /// Maximum call stack depth for the mq evaluator (mq-lang default if omitted)
+    #[arg(long = "max-call-stack-depth", env = "MQ_MCP_MAX_CALL_STACK_DEPTH")]
+    max_call_stack_depth: Option<u32>,
 }
 
 #[tokio::main]
@@ -45,6 +50,11 @@ async fn main() -> miette::Result<()> {
         .init();
 
     let cli = Cli::parse();
+    let engine = EngineConfig {
+        timeout: Duration::from_millis(cli.timeout),
+        max_timeout: Duration::from_millis(cli.max_timeout),
+        max_call_stack_depth: cli.max_call_stack_depth,
+    };
 
     if cli.http {
         server::start_http(
@@ -53,10 +63,10 @@ async fn main() -> miette::Result<()> {
                 allowed_hosts: cli.allowed_hosts,
                 bearer_token: cli.bearer_token,
             },
-            cli.db,
+            engine,
         )
         .await
     } else {
-        server::start(cli.db).await
+        server::start(engine).await
     }
 }
