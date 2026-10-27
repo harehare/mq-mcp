@@ -29,7 +29,7 @@ yaml-rust2 = {version = "0.13", default-features = false}
 
 [dev-dependencies]
 reqwest = {version = "0.13", default-features = false, features = ["json"]}
-rstest = "0.27.0"
+rstest = "0.28.0"
 tempfile = "3"
 
 [lib]
