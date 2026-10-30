@@ -76,7 +76,7 @@ pub fn outline(source: &str, nodes: &[Node], max_depth: Option<u8>) -> Outline {
         .filter_map(|node| match node {
             Node::Heading(h) => node
                 .position()
-                .map(|p| (h.depth, node.value(), p.start.line)),
+                .map(|p| (h.depth.get(), node.value(), p.start.line as usize)),
             _ => None,
         })
         .collect();
