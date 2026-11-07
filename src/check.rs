@@ -71,24 +71,8 @@ pub fn check_query(engine: &mut mq_lang::DefaultEngine, query: &str) -> Vec<Quer
     let mut hir = mq_hir::Hir::default();
     hir.add_code(None, query);
 
-    // The HIR only reports missing `include`d modules, not `import`ed ones.
-    let missing_imports =
-        hir.symbols()
-            .filter_map(|(_, symbol)| match (&symbol.kind, &symbol.value) {
-                (mq_hir::SymbolKind::Import(_), Some(name))
-                    if engine.get_module_path(name).is_err() =>
-                {
-                    Some((
-                        format!("Module not found: {name}"),
-                        symbol.source.text_range.unwrap_or_default(),
-                    ))
-                }
-                _ => None,
-            });
-
     hir.error_ranges()
         .into_iter()
-        .chain(missing_imports)
         .map(|(message, range)| QueryIssue {
             kind: "unresolved".to_string(),
             message,
