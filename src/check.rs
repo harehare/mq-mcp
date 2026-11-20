@@ -77,7 +77,7 @@ pub fn check_query(engine: &mut mq_lang::DefaultEngine, query: &str) -> Vec<Quer
             kind: "unresolved".to_string(),
             message,
             line: Some(range.start.line as usize),
-            column: Some(range.start.column),
+            column: Some(range.start.column as usize),
         })
         .collect()
 }
