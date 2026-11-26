@@ -9,7 +9,7 @@ license = "MIT"
 name = "mq-mcp"
 readme = "README.md"
 repository = "https://github.com/harehare/mq-mcp"
-version = "0.2.3"
+version = "0.3.0"
 
 [dependencies]
 axum = {version = "0.8", default-features = false, features = ["http1", "tokio"]}
