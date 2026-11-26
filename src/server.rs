@@ -914,7 +914,7 @@ impl ServerHandler for Server {
                 .enable_skills()
                 .build(),
         )
-        .with_protocol_version(ProtocolVersion::V_2025_06_18)
+        .with_protocol_version(ProtocolVersion::LATEST_WITH_INITIALIZE)
         .with_instructions(instructions)
     }
 }
@@ -1604,7 +1604,10 @@ Use it like this.\n";
     fn test_get_info() {
         let server = Server::new(EngineConfig::default());
         let info = server.get_info();
-        assert_eq!(info.protocol_version, ProtocolVersion::V_2025_06_18);
+        assert_eq!(
+            info.protocol_version,
+            ProtocolVersion::LATEST_WITH_INITIALIZE
+        );
         assert!(info.instructions.is_some());
         let instructions = info.instructions.unwrap();
         assert!(

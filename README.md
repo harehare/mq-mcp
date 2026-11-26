@@ -279,7 +279,7 @@ Query failures (syntax errors, timeouts) are returned as tool results with
 
 By default `mq-mcp` speaks MCP over stdio, for use as a local subprocess. It can
 also run as a remote server using the
-[Streamable HTTP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http)
+[Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http)
 transport:
 
 ```bash
