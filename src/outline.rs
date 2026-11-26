@@ -216,7 +216,7 @@ pub fn parse_frontmatter(nodes: &[Node]) -> FrontmatterResult {
     }
 }
 
-fn parse_yaml(raw: &str) -> Result<Value, String> {
+pub(crate) fn parse_yaml(raw: &str) -> Result<Value, String> {
     let documents = yaml_rust2::YamlLoader::load_from_str(raw).map_err(|e| e.to_string())?;
     Ok(documents.first().map_or(Value::Null, yaml_to_json))
 }

@@ -170,6 +170,18 @@ No parameters.
 - `extensions` (optional array of strings): extensions to include, without the dot (default: `md`, `markdown`, `mdx`)
 - `limit` (optional integer): at most this many files (default 200, maximum 1000)
 
+## Skills
+
+The server implements the [MCP Skills extension](https://modelcontextprotocol.io/extensions/skills/overview)
+(`io.modelcontextprotocol/skills`) and serves an Agent Skill that teaches a
+client how to write mq queries. Clients that support the extension discover it
+with `skills/list` and read its files with `resources/read`:
+
+- `skill://processing-markdown/SKILL.md`
+- `skill://processing-markdown/EXAMPLES.md`
+
+The skill is embedded in the binary (see `skills/`).
+
 ## Reading files
 
 Passing a large document inline means the model has to write it out in full,

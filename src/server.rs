@@ -3,13 +3,21 @@ use crate::{
     files::FileAccess,
     outline::{self, FrontmatterResult, Outline},
     output::{self, DEFAULT_MAX_OUTPUT_CHARS, MIN_OUTPUT_CHARS, OutputOptions},
+    skills,
 };
 use miette::miette;
 use rmcp::{
-    ErrorData, ServerHandler, ServiceExt,
+    ErrorData, RoleServer, ServerHandler, ServiceExt,
     handler::server::{tool::ToolRouter, wrapper::Parameters},
-    model::{CallToolResult, ContentBlock, ProtocolVersion, ServerCapabilities, ServerConfig},
-    schemars, tool, tool_handler, tool_router,
+    model::{
+        CacheScope, CallToolResult, ContentBlock, GetSkillRequestParams, GetSkillResult,
+        ListResourcesResult, ListSkillsResult, PaginatedRequestParams, ProtocolVersion,
+        ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, ServerCapabilities,
+        ServerConfig,
+    },
+    schemars,
+    service::RequestContext,
+    tool, tool_handler, tool_router,
     transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     },
@@ -826,8 +834,54 @@ impl Server {
     }
 }
 
+/// The embedded skills never change while the server runs.
+const SKILLS_TTL_MS: u64 = 3_600_000;
+
 #[tool_handler]
 impl ServerHandler for Server {
+    async fn list_resources(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListResourcesResult, ErrorData> {
+        Ok(ListResourcesResult::with_all_items(skills::resources())
+            .with_ttl_ms(SKILLS_TTL_MS)
+            .with_cache_scope(CacheScope::Public))
+    }
+
+    async fn read_resource(
+        &self,
+        request: ReadResourceRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ReadResourceResponse, ErrorData> {
+        let contents = skills::read(&request.uri)?;
+        Ok(ReadResourceResult::new(vec![contents])
+            .with_ttl_ms(SKILLS_TTL_MS)
+            .with_cache_scope(CacheScope::Public)
+            .into())
+    }
+
+    async fn list_skills(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<ListSkillsResult, ErrorData> {
+        Ok(ListSkillsResult::with_all_items(skills::list())
+            .with_ttl_ms(SKILLS_TTL_MS)
+            .with_cache_scope(CacheScope::Public))
+    }
+
+    async fn get_skill(
+        &self,
+        request: GetSkillRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<GetSkillResult, ErrorData> {
+        let mut result = GetSkillResult::new(skills::get(&request.uri)?);
+        result.ttl_ms = Some(SKILLS_TTL_MS);
+        result.cache_scope = Some(CacheScope::Public);
+        Ok(result)
+    }
+
     fn get_info(&self) -> ServerConfig {
         let mut instructions = String::from(
             "mq is a tool for processing markdown content with a jq-like syntax. \
@@ -856,6 +910,8 @@ impl ServerHandler for Server {
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_tool_list_changed()
+                .enable_resources()
+                .enable_skills()
                 .build(),
         )
         .with_protocol_version(ProtocolVersion::V_2025_06_18)
