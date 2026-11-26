@@ -16,7 +16,7 @@ use rmcp::{
         ServerConfig,
     },
     schemars,
-    service::RequestContext,
+    service::{NotificationContext, Peer, RequestContext},
     tool, tool_handler, tool_router,
     transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
@@ -283,6 +283,28 @@ impl Server {
         }
     }
 
+    /// Adopts the workspace roots the client shares (`roots/list`) as the readable
+    /// directories, unless `--root` already fixed them.
+    #[allow(deprecated)] // roots are deprecated in newer protocol versions, but older clients still use them
+    async fn refresh_client_roots(&self, peer: &Peer<RoleServer>) {
+        if self.config.files.has_configured_roots() {
+            return;
+        }
+        let shares_roots = peer
+            .peer_info()
+            .is_some_and(|info| info.capabilities.roots.is_some());
+        if !shares_roots {
+            return;
+        }
+        match peer.list_roots().await {
+            Ok(result) => self
+                .config
+                .files
+                .set_client_roots(result.roots.iter().map(|root| root.uri.as_str())),
+            Err(e) => tracing::warn!("could not list the client's roots: {e}"),
+        }
+    }
+
     fn load_markdown(&self, doc: DocumentInput) -> Result<String, String> {
         self.load(doc.markdown, doc.path.as_deref(), "markdown")
     }
@@ -428,6 +450,7 @@ struct FunctionFilter {
 impl Server {
     pub fn new(mut config: EngineConfig) -> Self {
         config.max_output_chars = config.max_output_chars.max(MIN_OUTPUT_CHARS);
+        config.files = config.files.for_session();
         Self {
             tool_router: Self::tool_router(),
             config,
@@ -918,6 +941,14 @@ impl ServerHandler for Server {
         Ok(result)
     }
 
+    async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
+        self.refresh_client_roots(&context.peer).await;
+    }
+
+    async fn on_roots_list_changed(&self, context: NotificationContext<RoleServer>) {
+        self.refresh_client_roots(&context.peer).await;
+    }
+
     fn get_info(&self) -> ServerConfig {
         let mut instructions = String::from(
             "mq is a tool for processing markdown content with a jq-like syntax. \
@@ -928,7 +959,7 @@ impl ServerHandler for Server {
              Queries have a timeout; pass `timeout_ms` to raise it up to the server's maximum. \
              Long results are cut at a character limit and say how to continue: use `limit` and `offset` to page, or `format: \"json\"` for result types, attributes and line positions.",
         );
-        if self.config.files.is_enabled() {
+        if self.config.files.has_configured_roots() {
             let roots = self
                 .config
                 .files
@@ -940,6 +971,10 @@ impl ServerHandler for Server {
             instructions.push_str(&format!(
                 " Instead of sending a document's content, pass `path` to read a file under: {roots}. list_files shows what is available."
             ));
+        } else {
+            instructions.push_str(
+                " Tools also accept `path` for a file inside the workspace roots, when the client shares them; list_files shows what is available.",
+            );
         }
 
         ServerConfig::new(
@@ -2223,5 +2258,119 @@ Use it like this.\n";
         let inline: MarkdownInput = serde_json::from_value(json!({ "markdown": "# a" })).unwrap();
         assert_eq!(inline.doc.markdown.as_deref(), Some("# a"));
         assert_eq!(inline.output.format, None);
+    }
+}
+
+#[cfg(test)]
+#[allow(deprecated)] // roots are deprecated in newer protocol versions
+mod roots_tests {
+    use super::*;
+    use rmcp::{
+        ClientHandler,
+        model::{CallToolRequestParams, ClientCapabilities, ClientInfo, ListRootsResult, Root},
+        service::RequestContext,
+    };
+    use serde_json::json;
+    use tempfile::TempDir;
+
+    /// A client that shares `roots` (or none at all, without the capability).
+    struct Client {
+        roots: Option<Vec<String>>,
+    }
+
+    impl ClientHandler for Client {
+        fn get_info(&self) -> ClientInfo {
+            let caps = match self.roots {
+                Some(_) => ClientCapabilities::builder().enable_roots().build(),
+                None => ClientCapabilities::default(),
+            };
+            ClientInfo::new(caps, rmcp::model::Implementation::new("test", "0"))
+                .with_protocol_version(ProtocolVersion::V_2025_06_18)
+        }
+
+        async fn list_roots(
+            &self,
+            _context: RequestContext<rmcp::RoleClient>,
+        ) -> Result<ListRootsResult, ErrorData> {
+            let roots = self.roots.clone().unwrap_or_default();
+            Ok(ListRootsResult::new(
+                roots.into_iter().map(Root::new).collect(),
+            ))
+        }
+    }
+
+    /// Connects a client to a fresh server and reads `a.md` through `path`.
+    async fn read_a_md(files: FileAccess, client: Client) -> String {
+        let (server_io, client_io) = tokio::io::duplex(64 * 1024);
+        let server = Server::new(EngineConfig {
+            files,
+            ..EngineConfig::default()
+        });
+        tokio::spawn(async move {
+            let service = server.serve(server_io).await.unwrap();
+            service.waiting().await.unwrap();
+        });
+        let client = client.serve(client_io).await.unwrap();
+        // The server asks for the roots right after `initialized`.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        let result = client
+            .call_tool(
+                CallToolRequestParams::new("extract_headings")
+                    .with_arguments(json!({ "path": "a.md" }).as_object().unwrap().clone()),
+            )
+            .await
+            .unwrap();
+        let text: String = result
+            .content
+            .iter()
+            .filter_map(|c| c.as_text().map(|t| t.text.clone()))
+            .collect();
+        let _ = client.cancel().await;
+        text
+    }
+
+    fn workspace() -> TempDir {
+        let tmp = TempDir::new().unwrap();
+        std::fs::write(tmp.path().join("a.md"), "# From workspace").unwrap();
+        tmp
+    }
+
+    #[tokio::test]
+    async fn test_client_roots_allow_path_without_root_flag() {
+        let tmp = workspace();
+        let uri = format!("file://{}", tmp.path().display());
+        let text = read_a_md(
+            FileAccess::default(),
+            Client {
+                roots: Some(vec![uri]),
+            },
+        )
+        .await;
+        assert!(text.contains("From workspace"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn test_path_stays_disabled_when_client_shares_no_roots() {
+        let text = read_a_md(FileAccess::default(), Client { roots: None }).await;
+        assert!(text.contains("disabled"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn test_root_flag_overrides_client_roots() {
+        let configured = workspace();
+        let other = TempDir::new().unwrap();
+        std::fs::write(other.path().join("a.md"), "# From client").unwrap();
+
+        let files = FileAccess::new([configured.path().to_path_buf()], 1024).unwrap();
+        let uri = format!("file://{}", other.path().display());
+        let text = read_a_md(
+            files,
+            Client {
+                roots: Some(vec![uri]),
+            },
+        )
+        .await;
+        assert!(text.contains("From workspace"), "{text}");
     }
 }

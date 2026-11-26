@@ -189,7 +189,17 @@ and the same text is paid for twice (once read, once sent). With file access
 enabled, tools take a `path` instead and the document never passes through the
 conversation.
 
-File access is **off by default**. Allow one or more directories with `--root`:
+File access works in two ways:
+
+- **Workspace roots (automatic).** If the MCP client shares its workspace roots
+  (`roots/list`; clients that don't support it, or MCP protocol 2026-07-28 and later where roots are deprecated, won't send any), those directories are
+  allowed with no configuration, and follow the client when it changes them.
+  Only local `file://` roots that exist are used. This is per session, so one
+  client's workspace is never visible to another over HTTP.
+- **`--root` (explicit).** Allow one or more directories yourself. When `--root`
+  is given it **overrides** the client's roots, which are then ignored.
+
+With neither, file access is **off** and only inline content can be processed.
 
 ```bash
 mq-mcp --root ~/notes --root ~/projects/docs
@@ -198,7 +208,7 @@ MQ_MCP_ROOTS=~/notes:~/projects/docs mq-mcp     # ':' separated (';' on Windows)
 
 | Option | Env var | Default | Description |
 |--------|---------|---------|-------------|
-| `--root <dir>` | `MQ_MCP_ROOTS` | none (disabled) | Directory the `path` parameter may read from (repeatable) |
+| `--root <dir>` | `MQ_MCP_ROOTS` | none (the client's workspace roots, if shared) | Directory the `path` parameter may read from (repeatable); overrides the client's roots |
 | `--max-file-size <bytes>` | `MQ_MCP_MAX_FILE_SIZE` | `10485760` | Largest file that can be read |
 
 - A `path` is accepted only if it resolves to a file inside a root. Relative

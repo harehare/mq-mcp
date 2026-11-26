@@ -2,6 +2,7 @@ use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
+    sync::{Arc, RwLock},
 };
 
 /// Default upper bound for a file read through the `path` parameter.
@@ -15,10 +16,15 @@ const SKIPPED_DIRS: &[&str] = &["node_modules", "target"];
 
 /// Read access to files, confined to a set of allowed root directories.
 ///
-/// With no roots configured, file access is disabled and every path is rejected.
+/// The roots come from `--root` when given. Otherwise they are the workspace
+/// roots the MCP client shares (`roots/list`). With neither, file access is
+/// disabled and every path is rejected.
 #[derive(Debug, Clone)]
 pub struct FileAccess {
+    /// Roots set on the command line; they override whatever the client shares.
     roots: Vec<PathBuf>,
+    /// Roots the client shared for this session.
+    client_roots: Arc<RwLock<Vec<PathBuf>>>,
     max_file_size: u64,
 }
 
@@ -26,6 +32,7 @@ impl Default for FileAccess {
     fn default() -> Self {
         Self {
             roots: Vec::new(),
+            client_roots: Arc::default(),
             max_file_size: DEFAULT_MAX_FILE_SIZE,
         }
     }
@@ -56,20 +63,58 @@ impl FileAccess {
 
         Ok(Self {
             roots,
+            client_roots: Arc::default(),
             max_file_size,
         })
     }
 
-    pub fn is_enabled(&self) -> bool {
+    /// A copy with its own, empty set of client roots. Each MCP session must
+    /// use one, so a client's workspace never leaks into another's.
+    pub fn for_session(&self) -> Self {
+        Self {
+            client_roots: Arc::default(),
+            ..self.clone()
+        }
+    }
+
+    /// Whether `--root` was given, which makes client roots irrelevant.
+    pub fn has_configured_roots(&self) -> bool {
         !self.roots.is_empty()
     }
 
-    pub fn roots(&self) -> &[PathBuf] {
-        &self.roots
+    /// Replaces the roots shared by the client with `uris` (`file://` URIs).
+    /// URIs that aren't local existing directories are skipped.
+    pub fn set_client_roots<S: AsRef<str>>(&self, uris: impl IntoIterator<Item = S>) {
+        let roots = uris
+            .into_iter()
+            .filter_map(|uri| file_uri_to_path(uri.as_ref()))
+            .filter_map(|path| path.canonicalize().ok())
+            .filter(|path| path.is_dir())
+            .collect();
+        *self
+            .client_roots
+            .write()
+            .expect("client roots lock poisoned") = roots;
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        !self.roots().is_empty()
+    }
+
+    /// The directories that may be read: `--root` if given, else the client's.
+    pub fn roots(&self) -> Vec<PathBuf> {
+        if self.has_configured_roots() {
+            self.roots.clone()
+        } else {
+            self.client_roots
+                .read()
+                .expect("client roots lock poisoned")
+                .clone()
+        }
     }
 
     fn disabled_message() -> String {
-        "File access is disabled on this server. Pass the content inline instead, or start the server with --root <dir> to allow reading files."
+        "File access is disabled on this server: the client shared no workspace roots and no --root was given. Pass the content inline instead, or start the server with --root <dir> to allow reading files."
             .to_string()
     }
 
@@ -77,7 +122,7 @@ impl FileAccess {
         // Deliberately the same for "missing" and "outside the roots", so a path
         // outside the roots can't be probed for existence.
         let roots = self
-            .roots
+            .roots()
             .iter()
             .map(|r| r.display().to_string())
             .collect::<Vec<_>>()
@@ -96,17 +141,18 @@ impl FileAccess {
             return Err(Self::disabled_message());
         }
 
+        let roots = self.roots();
         let path_ref = Path::new(path);
         let candidates: Vec<PathBuf> = if path_ref.is_absolute() {
             vec![path_ref.to_path_buf()]
         } else {
-            self.roots.iter().map(|root| root.join(path_ref)).collect()
+            roots.iter().map(|root| root.join(path_ref)).collect()
         };
 
         candidates
             .into_iter()
             .filter_map(|candidate| candidate.canonicalize().ok())
-            .find(|real| self.roots.iter().any(|root| real.starts_with(root)))
+            .find(|real| roots.iter().any(|root| real.starts_with(root)))
             .ok_or_else(|| self.denied_message(path))
     }
 
@@ -160,7 +206,7 @@ impl FileAccess {
                 }
                 vec![real]
             }
-            None if self.is_enabled() => self.roots.clone(),
+            None if self.is_enabled() => self.roots(),
             None => return Err(Self::disabled_message()),
         };
 
@@ -175,6 +221,39 @@ impl FileAccess {
 
         Ok((files, truncated))
     }
+}
+
+/// Converts a local `file://` URI to a path; `None` for other schemes or remote hosts.
+fn file_uri_to_path(uri: &str) -> Option<PathBuf> {
+    let rest = uri.strip_prefix("file://")?;
+    let (host, path) = rest.split_at(rest.find('/')?);
+    if !host.is_empty() && !host.eq_ignore_ascii_case("localhost") {
+        return None;
+    }
+
+    let mut bytes = Vec::with_capacity(path.len());
+    let raw = path.as_bytes();
+    let mut i = 0;
+    while i < raw.len() {
+        if raw[i] == b'%' {
+            let hex = std::str::from_utf8(raw.get(i + 1..i + 3)?).ok()?;
+            bytes.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            bytes.push(raw[i]);
+            i += 1;
+        }
+    }
+    let path = String::from_utf8(bytes).ok()?;
+
+    // `file:///C:/dir` carries the drive letter after the leading slash.
+    #[cfg(windows)]
+    let path = match path.as_bytes() {
+        [b'/', drive, b':', ..] if drive.is_ascii_alphabetic() => path[1..].to_string(),
+        _ => path,
+    };
+
+    Some(PathBuf::from(path))
 }
 
 /// Depth-first walk in name order. Returns `false` once `limit` is exceeded.
@@ -347,6 +426,69 @@ mod tests {
 
         fs::write(tmp.path().join("root/bin.md"), [0xff, 0xfe, 0x00]).unwrap();
         assert!(access.read("bin.md").unwrap_err().contains("UTF-8"));
+    }
+
+    #[rstest]
+    #[case::plain("file:///tmp/a", Some("/tmp/a"))]
+    #[case::localhost("file://localhost/tmp/a", Some("/tmp/a"))]
+    #[case::percent("file:///tmp/my%20docs", Some("/tmp/my docs"))]
+    #[case::unicode("file:///tmp/%E3%83%A1%E3%83%A2", Some("/tmp/メモ"))]
+    #[case::remote_host("file://example.com/tmp/a", None)]
+    #[case::other_scheme("https://example.com/tmp/a", None)]
+    #[case::bad_escape("file:///tmp/%zz", None)]
+    #[case::no_path("file://", None)]
+    #[cfg(unix)]
+    fn test_file_uri_to_path(#[case] uri: &str, #[case] expected: Option<&str>) {
+        assert_eq!(file_uri_to_path(uri), expected.map(PathBuf::from));
+    }
+
+    #[test]
+    fn test_client_roots_enable_access() {
+        let (tmp, _) = fixture();
+        let access = FileAccess::default();
+        assert!(!access.is_enabled());
+
+        let uri = format!("file://{}", tmp.path().join("root").display());
+        access.set_client_roots([uri]);
+        assert!(access.is_enabled());
+        assert_eq!(access.read("a.md").unwrap(), "# A");
+        assert!(access.read("../outside/secret.md").is_err());
+    }
+
+    #[test]
+    fn test_client_roots_skip_invalid_and_can_be_replaced() {
+        let (tmp, _) = fixture();
+        let access = FileAccess::default();
+        let root = format!("file://{}", tmp.path().join("root").display());
+        access.set_client_roots([
+            root,
+            "https://example.com".to_string(),
+            format!("file://{}", tmp.path().join("missing").display()),
+        ]);
+        assert_eq!(access.roots().len(), 1);
+
+        access.set_client_roots(Vec::<String>::new());
+        assert!(!access.is_enabled());
+    }
+
+    #[test]
+    fn test_configured_roots_override_client_roots() {
+        let (tmp, access) = fixture();
+        let outside = format!("file://{}", tmp.path().join("outside").display());
+        access.set_client_roots([outside]);
+        assert!(access.read("a.md").is_ok());
+        assert!(access.read("secret.md").is_err());
+    }
+
+    #[test]
+    fn test_for_session_does_not_share_client_roots() {
+        let (tmp, _) = fixture();
+        let base = FileAccess::default();
+        let session = base.for_session();
+        session.set_client_roots([format!("file://{}", tmp.path().join("root").display())]);
+        assert!(session.is_enabled());
+        assert!(!base.is_enabled());
+        assert!(!base.for_session().is_enabled());
     }
 
     #[test]
