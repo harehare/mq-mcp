@@ -435,6 +435,7 @@ impl Server {
     }
 
     #[tool(
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
         description = "Executes an mq query on the provided HTML content (inline or from a file) and returns the result as Markdown. Selectors and functions listed in the available_selectors and available_functions tools can be used. Use `limit`/`offset` to page through long results and `format: \"json\"` for structured results."
     )]
     fn html_to_markdown(
@@ -465,6 +466,7 @@ impl Server {
     }
 
     #[tool(
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
         description = "Run a custom mq query on markdown content (inline `markdown` or a file `path`). Prefer the dedicated extract_* tools for simple cases. Examples: `.h2` (all h2 headings), `select(.code.lang == \"rust\")` (rust code blocks), `.link | to_text()` (link texts), `select(contains(\"TODO\"))`. On a syntax error, use validate_query, or check available_functions / available_selectors. Queries exceeding the timeout fail; pass timeout_ms to adjust (capped by the server). Long results are cut at max_output_chars; use limit/offset to page, and format: \"json\" for types, attributes and line positions."
     )]
     fn extract_markdown(
@@ -479,7 +481,7 @@ impl Server {
         self.eval_query(doc, &query, timeout_ms, &output)
     }
 
-    #[tool(
+    #[tool(annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
         description = "Run the same mq query against multiple markdown documents (inline or by file path) in one call, instead of one extract_markdown call per document. Returns one object per document (index, optional id, results, total, and error if that document's query failed) — a failure in one document does not abort the rest.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<BatchOutput>()
     )]
@@ -547,52 +549,80 @@ impl Server {
         Self::structured(&BatchOutput { documents })
     }
 
-    #[tool(description = "Extract all headings (h1–h6) from markdown content.")]
+    #[tool(
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
+        description = "Extract all headings (h1–h6) from markdown content."
+    )]
     fn extract_headings(&self, Parameters(input): Parameters<MarkdownInput>) -> McpResult {
         self.eval_selector(input, ".h")
     }
 
-    #[tool(description = "Extract all fenced code blocks from markdown content.")]
+    #[tool(
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
+        description = "Extract all fenced code blocks from markdown content."
+    )]
     fn extract_code_blocks(&self, Parameters(input): Parameters<MarkdownInput>) -> McpResult {
         self.eval_selector(input, ".code")
     }
 
-    #[tool(description = "Extract all unchecked task list items (todos) from markdown content.")]
+    #[tool(
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
+        description = "Extract all unchecked task list items (todos) from markdown content."
+    )]
     fn extract_todos(&self, Parameters(input): Parameters<MarkdownInput>) -> McpResult {
         self.eval_selector(input, ".todo")
     }
 
-    #[tool(description = "Extract all checked task list items (done tasks) from markdown content.")]
+    #[tool(
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
+        description = "Extract all checked task list items (done tasks) from markdown content."
+    )]
     fn extract_done_tasks(&self, Parameters(input): Parameters<MarkdownInput>) -> McpResult {
         self.eval_selector(input, ".done")
     }
 
-    #[tool(description = "Extract all links from markdown content.")]
+    #[tool(
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
+        description = "Extract all links from markdown content."
+    )]
     fn extract_links(&self, Parameters(input): Parameters<MarkdownInput>) -> McpResult {
         self.eval_selector(input, ".link")
     }
 
-    #[tool(description = "Extract all images from markdown content.")]
+    #[tool(
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
+        description = "Extract all images from markdown content."
+    )]
     fn extract_images(&self, Parameters(input): Parameters<MarkdownInput>) -> McpResult {
         self.eval_selector(input, ".image")
     }
 
-    #[tool(description = "Extract all tables from markdown content.")]
+    #[tool(
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
+        description = "Extract all tables from markdown content."
+    )]
     fn extract_tables(&self, Parameters(input): Parameters<MarkdownInput>) -> McpResult {
         self.eval_selector(input, ".table")
     }
 
-    #[tool(description = "Extract all paragraph text nodes from markdown content.")]
+    #[tool(
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
+        description = "Extract all paragraph text nodes from markdown content."
+    )]
     fn extract_text(&self, Parameters(input): Parameters<MarkdownInput>) -> McpResult {
         self.eval_selector(input, ".text")
     }
 
-    #[tool(description = "Extract all blockquotes from markdown content.")]
+    #[tool(
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
+        description = "Extract all blockquotes from markdown content."
+    )]
     fn extract_blockquotes(&self, Parameters(input): Parameters<MarkdownInput>) -> McpResult {
         self.eval_selector(input, ".blockquote")
     }
 
     #[tool(
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
         description = "Split markdown content into sections (heading + body) and return all of them as markdown."
     )]
     fn extract_sections(&self, Parameters(input): Parameters<MarkdownInput>) -> McpResult {
@@ -604,6 +634,7 @@ impl Server {
     }
 
     #[tool(
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
         description = "Extract a specific section (heading + body) from markdown content by title. Performs a partial, case-sensitive match on the heading text."
     )]
     fn extract_section(
@@ -617,6 +648,7 @@ impl Server {
     }
 
     #[tool(
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
         description = "Generate a table of contents from the headings in markdown content. Returns a list of indented entries."
     )]
     fn extract_toc(&self, Parameters(input): Parameters<MarkdownInput>) -> McpResult {
@@ -627,7 +659,7 @@ impl Server {
         )
     }
 
-    #[tool(
+    #[tool(annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
         description = "Summarise a markdown document's structure without returning its content: totals (characters, lines, code blocks by language, tables, links, images, todos), whether it has front matter, and every heading with its line range, size in characters and number of subsections. Use it first on large documents to decide which section to fetch with extract_section.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<Outline>()
     )]
@@ -646,7 +678,7 @@ impl Server {
         }
     }
 
-    #[tool(
+    #[tool(annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
         description = "Extract a document's YAML or TOML front matter as parsed JSON, along with its raw text. Reports found: false when the document has none.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<FrontmatterResult>()
     )]
@@ -660,7 +692,7 @@ impl Server {
         }
     }
 
-    #[tool(
+    #[tool(annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
         description = "Check an mq query before running it: reports syntax errors and unknown functions/selectors with line and column and a \"did you mean\" suggestion. Optionally pass a sample (`markdown` or `path`) to also dry-run the query and see the match count and the first few results.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<QueryCheck>()
     )]
@@ -711,7 +743,7 @@ impl Server {
         })
     }
 
-    #[tool(
+    #[tool(annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
         description = "List the files the server may read through the `path` parameter, sorted by path. Defaults to Markdown files (md, markdown, mdx) in all allowed directories; pass `directory` and `extensions` to narrow or widen the search.",
         output_schema = rmcp::handler::server::tool::schema_for_output::<FileList>()
     )]
@@ -758,6 +790,7 @@ impl Server {
     }
 
     #[tool(
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
         description = "List mq functions usable in queries (name, description, params). Pass `filter` to match names/descriptions case-insensitively and keep the output small."
     )]
     fn available_functions(
@@ -809,7 +842,10 @@ impl Server {
         )]))
     }
 
-    #[tool(description = "Get available selectors that can be used in mq query.")]
+    #[tool(
+        annotations(read_only_hint = true, idempotent_hint = true, open_world_hint = false),
+        description = "Get available selectors that can be used in mq query."
+    )]
     fn available_selectors(&self) -> McpResult {
         let hir = mq_hir::Hir::default();
         let mut selectors = Vec::with_capacity(256);
@@ -2115,6 +2151,22 @@ Use it like this.\n";
             .list_files(Parameters(ListFilesInput::default()))
             .unwrap();
         assert!(error_text(disabled).contains("disabled"));
+    }
+
+    #[test]
+    fn test_every_tool_is_annotated_as_a_read_only_local_tool() {
+        let server = Server::new(EngineConfig::default());
+        let tools = server.tool_router.list_all();
+        assert!(!tools.is_empty());
+
+        for tool in tools {
+            let annotations = tool
+                .annotations
+                .unwrap_or_else(|| panic!("{} has no annotations", tool.name));
+            assert_eq!(annotations.read_only_hint, Some(true), "{}", tool.name);
+            assert_eq!(annotations.idempotent_hint, Some(true), "{}", tool.name);
+            assert_eq!(annotations.open_world_hint, Some(false), "{}", tool.name);
+        }
     }
 
     #[test]
