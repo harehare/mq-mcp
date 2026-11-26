@@ -302,3 +302,83 @@ async fn test_files_are_readable_only_inside_the_configured_root() {
 
     handle.abort();
 }
+
+const META_2026_07_28: &str = r#""_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientInfo":{"name":"test","version":"1.0"},"io.modelcontextprotocol/clientCapabilities":{}}"#;
+
+/// Posts a stateless 2026-07-28 request: no `initialize`, `_meta` in the body and
+/// the SEP-2243 standard headers.
+async fn post_2026_07_28(
+    client: &reqwest::Client,
+    url: &str,
+    method: &str,
+    name: Option<&str>,
+    params: &str,
+) -> serde_json::Value {
+    let mut request = client
+        .post(url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", "2026-07-28")
+        .header("Mcp-Method", method);
+    if let Some(name) = name {
+        request = request.header("Mcp-Name", name);
+    }
+    let body = format!(
+        r#"{{"jsonrpc":"2.0","id":1,"method":"{method}","params":{{{META_2026_07_28}{params}}}}}"#
+    );
+    let response = request.body(body).send().await.expect("request");
+    assert_eq!(response.status(), 200);
+    let text = response.text().await.expect("response body");
+    // The reply may be a plain JSON body or a single SSE event.
+    let json = text
+        .lines()
+        .find_map(|line| line.strip_prefix("data:"))
+        .unwrap_or(&text);
+    serde_json::from_str(json.trim()).unwrap_or_else(|e| panic!("bad response {text}: {e}"))
+}
+
+#[tokio::test]
+async fn test_skills_list_and_get_over_2026_07_28() {
+    let (url, handle) = spawn_server().await;
+    let client = reqwest::Client::new();
+
+    let list = post_2026_07_28(&client, &url, "skills/list", None, "").await;
+    let result = &list["result"];
+    assert_eq!(result["resultType"], "complete");
+    assert!(result["ttlMs"].is_u64());
+    assert_eq!(result["cacheScope"], "public");
+    let skill = &result["skills"][0];
+    let uri = skill["uri"].as_str().expect("skill uri");
+    assert_eq!(uri, "skill://processing-markdown/SKILL.md");
+    assert_eq!(skill["frontmatter"]["name"], "processing-markdown");
+    assert!(
+        skill["resources"][0]["digest"]
+            .as_str()
+            .is_some_and(|d| d.starts_with("sha256:"))
+    );
+
+    let get = post_2026_07_28(
+        &client,
+        &url,
+        "skills/get",
+        Some(uri),
+        &format!(r#","uri":"{uri}""#),
+    )
+    .await;
+    assert_eq!(get["result"]["skill"]["uri"], uri);
+
+    let read = post_2026_07_28(
+        &client,
+        &url,
+        "resources/read",
+        Some(uri),
+        &format!(r#","uri":"{uri}""#),
+    )
+    .await;
+    let text = read["result"]["contents"][0]["text"]
+        .as_str()
+        .expect("text");
+    assert!(text.starts_with("---"), "SKILL.md starts with frontmatter");
+
+    handle.abort();
+}
